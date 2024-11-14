@@ -1,20 +1,19 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from  matplotlib.axes import Axes
-from vodscillator import *
 from scipy.fft import rfft, rfftfreq
 import scipy.signal.windows as wins
 
 
 # define helper functions
 
-def get_vector_strength(phase_diffs):
+def get_avg_vector(phase_diffs):
   # get the sin and cos of the phase diffs, and average over the window pairs
   xx= np.mean(np.sin(phase_diffs),axis=0)
   yy= np.mean(np.cos(phase_diffs),axis=0)
-
-  # finally, output the vector strength (for each frequency)
-  return np.sqrt(xx**2 + yy**2)
+  
+  # finally, output the averaged vector's vector strength and angle with x axis (for each frequency) 
+  return np.sqrt(xx**2 + yy**2), np.arctan2(yy, xx)
 
 def get_wfft(wf, sr, t_win, t_shift=None, num_wins=None, hann=False, norm="backward"):
   """ Returns a dict with the windowed fft and associated freq ax of the given waveform
@@ -293,7 +292,7 @@ def get_coherence(wf, sr, t_win, t_shift=None, bin_shift=1, num_wins=None, hann=
       # take the difference between the phases in this current window and the next
       phase_diffs[win] = phases[win + 1] - phases[win]
     
-    coherence = get_vector_strength(phase_diffs)
+    coherence, avg_phase_diff = get_avg_vector(phase_diffs)
     
   # or we can reference it against the phase of the next frequency in the same window:
   elif ref_type == "next_freq":
@@ -311,7 +310,7 @@ def get_coherence(wf, sr, t_win, t_shift=None, bin_shift=1, num_wins=None, hann=
         phase_diffs[win, freq_bin] = phases[win, freq_bin + bin_shift] - phases[win, freq_bin]
     
     # get final coherence
-    coherence = get_vector_strength(phase_diffs)
+    coherence, avg_phase_diff = get_avg_vector(phase_diffs)
     
     # Since this references each frequency bin to its adjacent neighbor, we'll plot them w.r.t. the average frequency 
         # this corresponds to shifting everything over half a bin width (bin width is 1/t_win)
@@ -337,8 +336,8 @@ def get_coherence(wf, sr, t_win, t_shift=None, bin_shift=1, num_wins=None, hann=
         # These will correspond to our new frequency axis.
         pd_low[win, freq_bin - 1] = phases[win, freq_bin] - phases[win, freq_bin - 1]
         pd_high[win, freq_bin - 1] = phases[win, freq_bin + 1] - phases[win, freq_bin]
-    coherence_low = get_vector_strength(pd_low)
-    coherence_high = get_vector_strength(pd_high)
+    coherence_low, _ = get_avg_vector(pd_low)
+    coherence_high, _ = get_avg_vector(pd_high)
     # average the coherences you would get from either of these
     coherence = (coherence_low + coherence_high)/2
     # set the phase diffs to one of these (could've also been pd_high)
@@ -346,6 +345,8 @@ def get_coherence(wf, sr, t_win, t_shift=None, bin_shift=1, num_wins=None, hann=
     
   else:
     raise Exception("You didn't input a valid ref_type!")
+  
+  
   
   # get <|phase diffs|>
     # note we're unwrapping w.r.t. the frequency axis
@@ -359,6 +360,7 @@ def get_coherence(wf, sr, t_win, t_shift=None, bin_shift=1, num_wins=None, hann=
     d["phases"] = phases
     d["phase_diffs"] = phase_diffs
     d["means"] = means
+    d["avg_phase_diff"] = avg_phase_diff
     d["num_wins"] = num_wins
     d["freq_ax"] = freq_ax
     d["wfft"] = wfft
