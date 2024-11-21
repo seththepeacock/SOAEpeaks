@@ -36,7 +36,7 @@ def process_wfs(df):
     n_win = 32768
 
     # Track where we're at
-    n_wf = df.query("sr == 0").shape[0]
+    n_wf = (df['sr'] == 0).sum()
     n_current = 0
 
     for idx, row in df.iterrows():
