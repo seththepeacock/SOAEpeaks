@@ -11,7 +11,7 @@ def load_df(laptop=False, dfs_to_load=["York Data 1"]):
     if laptop:
         path = r"C:\Users\Owner\OneDrive\Documents\GitHub\SOAEpeaks\Data\\"
     else:
-        path = ""
+        path = r"Data/"
         
     if dfs_to_load == "All":
         dfs_to_load = ["Pre-2014 Data", "Curated Data", "Extra Owl", "Lots of Data", "UWO Data", "York Data 1", "York Data 2", "York Data 3"]
