@@ -13,7 +13,7 @@ def load_df(laptop=False, dfs_to_load=["York Data 1"]):
     else:
         path = r"Data/"
         
-    if dfs_to_load == "All":
+    if dfs_to_load == ["All"]:
         dfs_to_load = ["Pre-2014 Data", "Curated Data", "Extra Owl", "Lots of Data", "UWO Data", "York Data 1", "York Data 2", "York Data 3"]
 
     dfs = []
@@ -23,20 +23,22 @@ def load_df(laptop=False, dfs_to_load=["York Data 1"]):
         dfs.append(df0)
         
     print("Combining into one Dataframe!")
-    return pd.concat(dfs)
+    return pd.concat(dfs, ignore_index=True)
 
 def process_wfs(df):
-    """Take FFT of all waveforms in the dataframe and convert to dB SPL"""
+    """Take FFT of all raw waveforms in the dataframe and convert to dB SPL"""
     # Define constants that allow us to correct for experimental setup
-    amp_factor = 0.01  # Correct for amplifier gain
-    mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
+    # amp_factor = 0.01  # Correct for amplifier gain
+    amp_factor = 0.1  # Correct for amplifier gain
+    # mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
+    mic_factor = 1  # Corresponds to the mic level of 1 microvolt
     rms_factor = np.sqrt(2)  # Converts to RMS value
 
     # Define window length
     n_win = 32768
 
     # Track where we're at
-    n_wf = (df['sr'] == 0).sum()
+    n_wf = (df['sr'] != 0).sum()
     n_current = 0
 
     for idx, row in df.iterrows():
@@ -69,7 +71,7 @@ def process_wfs(df):
     return df
 
             
-def get_samples(processed_df, species=["Human", "Lizard", "Anolis"]):
+def get_samples(df, species=["Human", "Lizard", "Anolis"]):
     """ Throws out bad samples and max-min scales remaining; returns dict with list of samples, max, min, and (one) freq ax
       Parameters
       ----------------
@@ -78,6 +80,18 @@ def get_samples(processed_df, species=["Human", "Lizard", "Anolis"]):
       species: list of strings
         List of species to keep (exports each species as a separate file)
     """
-    df = processed_df[processed_df['species'].isin(species)]
+    # just keep the species we want
+    df = df[df['species'].isin(species)]
+    # crop any spectra that are longer than the minimum length (which will be more than enough)
+    min_num_bins = df['freqs'].apply(len).min()
+    for idx, row in df.iterrows():
+        freqs = row['freqs']
+        if len(row['freqs']) > min_num_bins:
+            df.at[idx, 'freqs'] = row['freqs'][0:min_num_bins]
+            df.at[idx, 'spectrum'] = row['spectrum'][0:min_num_bins]
+
+    # 
+    return df
+            
         
         
