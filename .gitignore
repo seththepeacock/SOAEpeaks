@@ -1,6 +1,7 @@
 # My ignores
 *.parquet
 Data/
+Peak Picker PDFs/
 
 
 # Byte-compiled / optimized / DLL files
