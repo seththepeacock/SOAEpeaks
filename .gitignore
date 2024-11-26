@@ -1,6 +1,6 @@
 # My ignores
 *.parquet
-
+Data/
 
 
 # Byte-compiled / optimized / DLL files
