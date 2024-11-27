@@ -1,9 +1,9 @@
 #!/bin/bash
 
-#PBS -N cnn_tissue_mnist
+#PBS -N noise_floors_SOAE
 #PBS -A PAS2038
-#PBS -l walltime=0:30:00
-#PBS -l nodes=1:ppn=4
+#PBS -l walltime=2:00:00
+#PBS -l nodes=1:ppn=8
 #PBS -j oe
 #SBATCH --mail-user=seththepeacock@gmail.com
 #
@@ -14,7 +14,7 @@ module reset
 source /fs/ess/PAS2038/PHYSICS_5680_OSU/jupyter/bin/activate
 which python
 #
-cd $HOME/osc_classes/PHYSICS_5680_OSU/materials/module_6_cnn_osc
-python -u my_cnn_intro.py
+cd $HOME/osc_classes/PHYSICS_5680_OSU/materials/SOAEpeaks
+python -u get_noise_floors.py
 
 
