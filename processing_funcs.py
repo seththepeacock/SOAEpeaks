@@ -1,9 +1,20 @@
 import numpy as np
-from plots import *
 import matplotlib.pyplot as plt
 import pandas as pd
 from pathlib import Path
 from scipy.fft import rfft, rfftfreq
+import statsmodels.api as sm
+from scipy.ndimage import gaussian_filter
+
+
+def get_noise_floor(f, spectrum, lowess_frac = 0.3, smoothing_sigma = 150, initial_cutoff = 300):
+    lowess_fit = sm.nonparametric.lowess(spectrum, f, frac=lowess_frac, return_sorted=False)
+    min_spectrum = np.minimum(lowess_fit, spectrum)
+    min_spectrum[0:initial_cutoff] = spectrum[0:initial_cutoff]
+    noise_floor = gaussian_filter(min_spectrum, sigma=smoothing_sigma)
+    return noise_floor
+
+
 
 def load_df(laptop=False, dfs_to_load=["York Data 1"]):
     """ Load all desired dataframes and concatenate (with no arguments, this loads just York Data 1 with OSC path)
