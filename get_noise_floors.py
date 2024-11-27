@@ -8,7 +8,6 @@ from processing_funcs import *
 df_path = os.path.join("Data", "processed_df.parquet")
 # Load the dataframe
 df = pd.read_parquet(df_path)
-df = df.head(10)
 spectrums = df['spectrum'].to_list()
 filepaths = df['filepath'].to_list()
 species = df['species'].to_list()
