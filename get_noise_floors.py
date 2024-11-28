@@ -3,7 +3,7 @@ from scipy.fft import rfft, rfftfreq
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
-from processing_funcs import *
+from helper_funcs import *
 
 df_path = os.path.join("Data", "processed_df.parquet")
 # Load the dataframe
