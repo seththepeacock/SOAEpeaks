@@ -47,14 +47,38 @@ def gen_samples(df, hwhm_max, snr_max):
     return samples
         
         
+def estimate_and_add_noise(synth_spectrum, sample_spectrum, f=rfftfreq(32768, 1/44100), rng=np.random.default_rng()):
+    # First, we crop frequency axis and sample spectrum to 8-11kHz as these won't have any peaks and are just noise
+    f_min = np.argmin(np.abs(f - 8000))
+    f_max = np.argmin(np.abs(f - 11000))
+    f = f[f_min:f_max]
+    sample_spectrum = sample_spectrum[f_min:f_max]
+    # Next, we convert to linear scale
+    linear_sample_spectrum = 10**(sample_spectrum/20)
+    linear_synth_spectrum = 10**(synth_spectrum/20)
+    # Now we fit a noise floor estimate using LOWESS
+    lowess = sm.nonparametric.lowess
+    # This controls how tightly the fit is to the data
+    frac = 0.1 # This value yielded a close but still smooth fit (too closely and we just follow the noise!)
+    noise_floor = lowess(linear_sample_spectrum, f, frac=frac, return_sorted=False)
+    # The additive noise is then the difference between the sample spectrum and the noise floor
+    additive_noise = linear_sample_spectrum - noise_floor
+    # We assume this noise is normally distributed with mean zero. 
+    # We now estimate the standard deviation using the MLE (since the mean is known, this is also unbiased):
+    sigma = np.sqrt(np.mean((additive_noise)**2))
+    # We can now add gaussian noise to the linear spectrum
+    noisy_linear_synth_spectrum = linear_synth_spectrum + rng.normal(loc=0, scale=sigma, size=len(linear_synth_spectrum))
+    # Finally, we convert it back to dB and return
+    return 20 * np.log10(noisy_linear_synth_spectrum)
     
     
+   
 
-def gen_spectrum(f=rfftfreq(32768, 1/44100), species='Lizard', noise_floor=[], noise_sigma=0.01, f0_dist='chi', plot=False):
-    # Get frequency axis
-    f = rfftfreq(32768, 1/44100)
+def gen_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='General', filepath=None, plot=False):
+    # Get noise floor
+    noise_floor = get_noise_floor(f, sample_spectrum)
     
-    # Get num bins in the spectrum
+    # Get num bins
     n_bins = len(noise_floor)
     if n_bins != 8192:
         raise ValueError(f"Expected noise floor to be 8192 bins, but it's {n_bins} bins!")
@@ -99,13 +123,10 @@ def gen_spectrum(f=rfftfreq(32768, 1/44100), species='Lizard', noise_floor=[], n
     rng = np.random.default_rng()  # Default random generator instance
     
     # Initialize matrix to store all the different peaks to be added to the noisefloor
-    spec_components = np.empty((n_peaks + 2, n_bins))
+    spec_components = np.empty((n_peaks + 1, n_bins))
     
     # Add noise floor
     spec_components[-1, :] = noise_floor
-    
-    # Add gaussian noise
-    spec_components[-2, :] = rng.normal(0, noise_sigma, n_bins)
     
     # Pick number of peaks
     n_peaks = rng.integers(num_peaks_min, num_peaks_max, endpoint=True)
@@ -116,13 +137,13 @@ def gen_spectrum(f=rfftfreq(32768, 1/44100), species='Lizard', noise_floor=[], n
     # Generate and add peaks
     for i in range(n_peaks):
         # f0
-        if f0_dist == 'chi':
+        if species in ["Lizard", "Human"]:
             # Draw the positions from a chi square
             f0 = rng.chisquare(df=f0_chi_dof)*f0_chi_new_pivot/f0_chi_og_pivot
             # make sure it's below our spectral max, resample if not
             while f0 > f[-1]:
                 f0 = rng.chisquare(df=f0_chi_dof)*f0_chi_new_pivot/f0_chi_og_pivot
-        elif f0_dist == 'uniform':
+        elif species == 'General':
             # Draw the positions from a uniform distribution across the frequency range
             f0 = rng.uniform(f[0], f[-1])
         # Lock this onto the grid
@@ -142,11 +163,20 @@ def gen_spectrum(f=rfftfreq(32768, 1/44100), species='Lizard', noise_floor=[], n
         
     # Combine everything into the final synthetic spectrum
     synth_spectrum = np.sum(spec_components, axis=0)
-
+    
+    # Add gaussian noise
+    synth_spectrum  = estimate_and_add_noise(synth_spectrum, sample_spectrum, f=f, rng=rng)
+    
     if plot:
+        if species == 'General':
+            f0_dist = 'Uniform'
+        elif species in ['Lizard', 'Human']:
+            f0_dist = 'Chi Square'
         plt.plot(f/1000, synth_spectrum)
         plt.plot(f/1000, noise_floor, label="Noise Floor")
         plt.title(f"Synthetic Spectrum: Species={species}, {n_peaks} peaks, {f0_dist} location dist")
+        if filepath is not None:
+            plt.suptitle(f"Sample Spectrum: {filepath}")
         plt.legend()
         plt.xlabel("Frequency (kHz)")
         plt.ylabel("dB SPL")
@@ -185,9 +215,7 @@ def process_wfs(df):
     """Take FFT of all raw waveforms in the dataframe and convert to dB SPL"""
     # Define constants that allow us to correct for experimental setup
     amp_factor = 0.01  # Correct for amplifier gain
-    # amp_factor = 0.1  # Correct for amplifier gain
     mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
-    # mic_factor = 1  # Corresponds to the mic level of 1 microvolt
     rms_factor = np.sqrt(2)  # Converts to RMS value
 
     # Define window length
