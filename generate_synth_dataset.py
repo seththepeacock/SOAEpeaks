@@ -22,15 +22,15 @@ filepaths = df['filepath'].to_list()
 
 
 # Make the transfer dataset
-rows = []
-i=0
-for spectrum, species, filepath in zip(spectra, species_list, filepaths):
-    i += 1
-    print(f"Synthesizing {i} / {len(spectra)}")
-    d = synthesize_spectrum(spectrum, f=f, species=species, filepath=filepath, noise_domain='log')
-    rows.append(d)
-synth_transfer_df = pd.DataFrame(rows)
-synth_transfer_df.to_parquet("synth_transfer_df.parquet", engine='pyarrow')
+# rows = []
+# i=0
+# for spectrum, species, filepath in zip(spectra, species_list, filepaths):
+#     i += 1
+#     print(f"Synthesizing {i} / {len(spectra)}")
+#     d = synthesize_spectrum(spectrum, f=f, species=species, filepath=filepath, noise_domain='log')
+#     rows.append(d)
+# synth_transfer_df = pd.DataFrame(rows)
+# synth_transfer_df.to_parquet("synth_transfer_df.parquet", engine='pyarrow')
 
 # Make the general dataset
 rows = []
