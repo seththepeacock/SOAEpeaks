@@ -46,41 +46,46 @@ def gen_samples(df, hwhm_max, snr_max):
             samples[row, f0_index, 1:] = [1, hwhm, snr]
     return samples
 
-def estimate_noise_sigma(sample_spectrum, f=rfftfreq(32768, 1/44100)):
+def estimate_noise_sigma(sample_spectrum, f=rfftfreq(32768, 1/44100), noise_domain='log'):
     # First, we crop frequency axis and sample spectrum to 8-11kHz as these won't have any peaks and are just noise
     f_min = np.argmin(np.abs(f - 8000))
     f_max = np.argmin(np.abs(f - 11000))
     f = f[f_min:f_max]
     sample_spectrum = sample_spectrum[f_min:f_max]
-    # Next, we convert to linear scale
-    linear_sample_spectrum = 10**(sample_spectrum/20)
+    # Next, we convert to linear scale (if specified)
+    if noise_domain == 'linear':
+        sample_spectrum = 10**(sample_spectrum/20)
     # Now we fit a noise floor estimate using LOWESS
     lowess = sm.nonparametric.lowess
     # This controls how tightly the fit is to the data
     frac = 0.1 # This value yielded a close but still smooth fit (too closely and we just follow the noise!)
-    noise_floor = lowess(linear_sample_spectrum, f, frac=frac, return_sorted=False)
+    noise_floor = lowess(sample_spectrum, f, frac=frac, return_sorted=False)
     # The additive noise is then the difference between the sample spectrum and the noise floor
-    additive_noise = linear_sample_spectrum - noise_floor
+    additive_noise = sample_spectrum - noise_floor
     # We assume this noise is normally distributed with mean zero. 
     # We now estimate the standard deviation using the MLE (since the mean is known, this is also unbiased):
     sigma = np.sqrt(np.mean((additive_noise)**2))
     return sigma
         
         
-def estimate_and_add_noise(synth_spectrum, sample_spectrum, f=rfftfreq(32768, 1/44100), rng=np.random.default_rng()):
-    # First we convert to linear scale
-    linear_synth_spectrum = 10**(synth_spectrum/20)
+def estimate_and_add_noise(synth_spectrum, sample_spectrum, f=rfftfreq(32768, 1/44100), rng=np.random.default_rng(), noise_domain='log'):
+    # First we convert to linear scale (if specified)
+    if noise_domain == 'linear':
+        synth_spectrum = 10**(synth_spectrum/20)
     # Now we estimate the standard deviation of the additive noise of this sample spectrum
-    sigma = estimate_noise_sigma(sample_spectrum, f=f)
+    sigma = estimate_noise_sigma(sample_spectrum, f=f, noise_domain=noise_domain)
     # We can now add gaussian noise to the linear spectrum
-    noisy_linear_synth_spectrum = linear_synth_spectrum + rng.normal(loc=0, scale=sigma, size=len(linear_synth_spectrum))
-    # Finally, we convert it back to dB and return
-    return 20 * np.log10(noisy_linear_synth_spectrum)
+    noisy_synth_spectrum = synth_spectrum + rng.normal(loc=0, scale=sigma, size=len(synth_spectrum))
+    # Finally, we convert it back to dB (if necessary)
+    if noise_domain == 'linear':
+        noisy_synth_spectrum = 20 * np.log10(noisy_synth_spectrum)
+    # and return
+    return noisy_synth_spectrum
     
     
    
 
-def gen_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='General', filepath=None, plot=False):
+def synthesize_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='General', filepath=None, plot=False, noise_domain='log'):
     # Get noise floor
     noise_floor = get_noise_floor(f, sample_spectrum)
     
@@ -91,42 +96,46 @@ def gen_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='General',
     
     # Set generation parameters
     
-    # f0: For the transfer dataset, we'll draw half from a chi square
-    f0_chi_dof = 10
-    f0_chi_og_pivot = 20 # This is the value of the original distribution that we want to "grab"
-    f0_chi_new_pivot = 8000 # We'll rescale ("pull") the distribution so that that value becomes this value
-    # and the other half from a uniform distribution
-    f0_min = 50
-    f0_max = 6000
-    
-    # hwhm: we'll draw from uniform distribution
-    if species == 'Lizard':
-        hwhm_min = 25
-        hwhm_max = 150
-    elif species == 'Human':
-        hwhm_min = 1
-        hwhm_max = 25
-    elif species == 'General':
-        hwhm_min = 1
-        hwhm_max = 150
+    # f0: For the transfer dataset, we'll draw from a chi square (for general, just uniform across length of data)
+    f0_chi_dof = 5
+    f0_chi_og_pivot = 10 # This is the value of the original distribution that we want to "grab"
+    f0_chi_new_pivot = 6000 # We'll rescale ("pull") the distribution so that that value becomes this value
 
-    # SNR: we'll draw from a uniform distribution
-    snr_min = 0
-    snr_max = 20
+    # hwhm: we'll draw from uniform distributions; 90% from thin and 10% from wide for human, vice versa for lizard
+    hwhm_min_thin = 1
+    hwhm_max_thin = 10
+    hwhm_min_wide = 10
+    hwhm_max_wide = 100
+    # For general, we'll draw from a chi-square
+    general_hwhm_dof = 5
+    general_hwhm_og_pivot = 20 # This is the value of the original distribution that we want to "grab"
+    general_hwhm_new_pivot = 150 # We'll rescale ("pull") the distribution so that that value becomes this value
+    
+
+    # SNR: we'll draw from a chi-square distribution
+    snr_chi_dof = 7
+    snr_chi_og_pivot = 10 # This is the value of the original distribution that we want to "grab"
+    snr_chi_new_pivot = 10 # We'll rescale ("pull") the distribution so that that value becomes this value
+    # snr_max = 30
     
     # Number of peaks: we'll draw from a uniform distribution
-    if species == 'Lizard':
-        num_peaks_min = 5
-        num_peaks_max = 20
+    if species in ['Lizard', 'Anolis']:
+        num_peaks_min = 25
+        num_peaks_max = 35
     elif species == 'Human':
-        num_peaks_min = 5
-        num_peaks_max = 20
+        num_peaks_min = 25
+        num_peaks_max = 35
     elif species == 'General':
-        num_peaks_min = 20
-        num_peaks_mx = 30
+        # We can fit more in since they're no longer concentrated with the chi-square
+        num_peaks_min = 35
+        num_peaks_max = 50
+        
     
     # Create a Generator instance
     rng = np.random.default_rng()  # Default random generator instance
+    
+    # Pick number of peaks
+    n_peaks = rng.integers(num_peaks_min, num_peaks_max, endpoint=True)
     
     # Initialize matrix to store all the different peaks to be added to the noisefloor
     spec_components = np.empty((n_peaks + 1, n_bins))
@@ -134,32 +143,54 @@ def gen_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='General',
     # Add noise floor
     spec_components[-1, :] = noise_floor
     
-    # Pick number of peaks
-    n_peaks = rng.integers(num_peaks_min, num_peaks_max, endpoint=True)
-    
-    # Store peak list
+    # Create empty peak list
     peak_list = np.empty((n_peaks, 3))
     
     # Generate and add peaks
     for i in range(n_peaks):
-        # f0
-        if species in ["Lizard", "Human"]:
-            # Draw the positions from a chi square
-            f0 = rng.chisquare(df=f0_chi_dof)*f0_chi_new_pivot/f0_chi_og_pivot
-            # make sure it's below our spectral max, resample if not
-            while f0 > f[-1]:
-                f0 = rng.chisquare(df=f0_chi_dof)*f0_chi_new_pivot/f0_chi_og_pivot
-        elif species == 'General':
-            # Draw the positions from a uniform distribution across the frequency range
-            f0 = rng.uniform(f[0], f[-1])
-        # Lock this onto the grid
-        f0 = f[np.argmin(np.abs(f - f0))]
+        # Peak Position (f0):
+        # Keep picking until we get a new peak position
+        f0 = None
+        while f0 is None or f0 in peak_list[:, 0]:
+            # For transfer dataset, we draw from a chi-square
+            if species in ["Lizard", "Human", "Anolis"]:
+                # Draw positions from a chi-square and ensure it's below the spectral max
+                f0 = None  # Initialize to ensure the loop starts
+                while f0 is None or f0 > f[-1]:
+                    f0 = rng.chisquare(df=f0_chi_dof) * f0_chi_new_pivot / f0_chi_og_pivot
+            elif species == 'General':
+                # Draw the positions from a uniform distribution across the frequency range
+                f0 = rng.uniform(f[0], f[-1])
+            # Lock this onto the grid
+            f0 = f[np.argmin(np.abs(f - f0))]
         
-        # hwhm
-        hwhm = rng.uniform(hwhm_min, hwhm_max)
+        # Width (HWHM): 
+        
+        # General dataset is half thin and half wide
+        if species == 'General':
+            if rng.random() < 0.5:
+                hwhm = rng.uniform(hwhm_min_thin, hwhm_max_thin)
+            else:
+                hwhm = rng.uniform(hwhm_min_wide, hwhm_max_wide)
+        else:
+            # For transfer dataset, we pick 90% of them from the corresponding uniform dist (lizard=wide, human=thin)
+            if rng.random() < 0.90:
+                if species == 'Human':
+                    hwhm = rng.uniform(hwhm_min_thin, hwhm_max_thin)
+                elif species in ['Lizard', 'Anolis']:
+                    hwhm = rng.uniform(hwhm_min_wide, hwhm_max_wide)
+            # Every 1/10 peak, we pick from the opposite to see how they mix
+            else:
+                if species == 'Human':
+                    hwhm = rng.uniform(hwhm_min_wide, hwhm_max_wide)
+                elif species in ['Lizard', 'Anolis']:
+                    hwhm = rng.uniform(hwhm_min_thin, hwhm_max_thin)
+
+
         
         # SNR
-        snr = rng.uniform(snr_min, snr_max)
+        # Draw positions from a chi-square
+        snr = rng.chisquare(df=snr_chi_dof) * snr_chi_new_pivot / snr_chi_og_pivot
         
         # Add peak
         spec_components[i, :] = lorentzian(f, f0, hwhm, snr)
@@ -171,22 +202,44 @@ def gen_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='General',
     synth_spectrum = np.sum(spec_components, axis=0)
     
     # Add gaussian noise
-    synth_spectrum  = estimate_and_add_noise(synth_spectrum, sample_spectrum, f=f, rng=rng)
+    synth_spectrum  = estimate_and_add_noise(synth_spectrum, sample_spectrum, f=f, rng=rng, noise_domain=noise_domain)
     
     if plot:
         if species == 'General':
             f0_dist = 'Uniform'
-        elif species in ['Lizard', 'Human']:
+        elif species in ['Lizard', 'Human', 'Anolis']:
             f0_dist = 'Chi Square'
-        plt.plot(f/1000, synth_spectrum)
-        plt.plot(f/1000, noise_floor, label="Noise Floor")
-        plt.title(f"Synthetic Spectrum: Species={species}, {n_peaks} peaks, {f0_dist} location dist")
-        if filepath is not None:
-            plt.suptitle(f"Sample Spectrum: {filepath}")
-        plt.legend()
-        plt.xlabel("Frequency (kHz)")
-        plt.ylabel("dB SPL")
+
+        # Compute the global y-limits for both graphs
+        all_values = [synth_spectrum, noise_floor, sample_spectrum]
+        global_min = min([min(data) for data in all_values])
+        global_max = max([max(data) for data in all_values])
+
+        # Create the subplots
+        fig, axs = plt.subplots(2, 1, figsize=(10, 8))
+
+        # Plot the synthetic spectrum on the first subplot
+        axs[0].plot(f / 1000, synth_spectrum, label="Synthetic Spectrum")
+        axs[0].plot(f / 1000, noise_floor, label="Noise Floor")
+        axs[0].set_title(f"Synthetic Spectrum: species={species}, {n_peaks} peaks, {f0_dist} position distribution")
+        axs[0].set_xlabel("Frequency (kHz)")
+        axs[0].set_ylabel("dB SPL")
+        axs[0].legend()
+        axs[0].set_ylim(global_min, global_max)  # Set common y-limits
+
+        # Plot the sample spectrum with noise floor on the second subplot
+        axs[1].plot(f / 1000, sample_spectrum, label="Sample Spectrum")
+        axs[1].plot(f / 1000, noise_floor, label="Noise Floor")
+        axs[1].set_title(f"Sample Spectrum: {filepath if filepath else 'No filepath provided'}")
+        axs[1].set_xlabel("Frequency (kHz)")
+        axs[1].set_ylabel("dB SPL")
+        axs[1].legend()
+        axs[1].set_ylim(global_min, global_max)  # Set common y-limits
+
+        # Adjust the layout and show the plots
+        plt.tight_layout()
         plt.show()
+
     
     return {'noise floor' : noise_floor, 'species' : species, 'synth spectrum' : synth_spectrum, 'f0' : peak_list[:, 0], 'hwhm' : peak_list[:, 1], 'snr' : peak_list[:, 2]}
 
