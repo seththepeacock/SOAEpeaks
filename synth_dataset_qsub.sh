@@ -15,6 +15,6 @@ source /fs/ess/PAS2038/PHYSICS_5680_OSU/jupyter/bin/activate
 which python
 #
 cd $HOME/osc_classes/PHYSICS_5680_OSU/materials/SOAEpeaks
-python -u get_noise_floors.py
+python -u generate_synth_dataset.py
 
 
