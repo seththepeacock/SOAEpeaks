@@ -45,9 +45,8 @@ def gen_samples(df, hwhm_max, snr_max):
             # Add labels: [Yes/no peak, hwhm, snr]
             samples[row, f0_index, 1:] = [1, hwhm, snr]
     return samples
-        
-        
-def estimate_and_add_noise(synth_spectrum, sample_spectrum, f=rfftfreq(32768, 1/44100), rng=np.random.default_rng()):
+
+def estimate_noise_sigma(sample_spectrum, f=rfftfreq(32768, 1/44100)):
     # First, we crop frequency axis and sample spectrum to 8-11kHz as these won't have any peaks and are just noise
     f_min = np.argmin(np.abs(f - 8000))
     f_max = np.argmin(np.abs(f - 11000))
@@ -55,7 +54,6 @@ def estimate_and_add_noise(synth_spectrum, sample_spectrum, f=rfftfreq(32768, 1/
     sample_spectrum = sample_spectrum[f_min:f_max]
     # Next, we convert to linear scale
     linear_sample_spectrum = 10**(sample_spectrum/20)
-    linear_synth_spectrum = 10**(synth_spectrum/20)
     # Now we fit a noise floor estimate using LOWESS
     lowess = sm.nonparametric.lowess
     # This controls how tightly the fit is to the data
@@ -66,6 +64,14 @@ def estimate_and_add_noise(synth_spectrum, sample_spectrum, f=rfftfreq(32768, 1/
     # We assume this noise is normally distributed with mean zero. 
     # We now estimate the standard deviation using the MLE (since the mean is known, this is also unbiased):
     sigma = np.sqrt(np.mean((additive_noise)**2))
+    return sigma
+        
+        
+def estimate_and_add_noise(synth_spectrum, sample_spectrum, f=rfftfreq(32768, 1/44100), rng=np.random.default_rng()):
+    # First we convert to linear scale
+    linear_synth_spectrum = 10**(synth_spectrum/20)
+    # Now we estimate the standard deviation of the additive noise of this sample spectrum
+    sigma = estimate_noise_sigma(sample_spectrum, f=f)
     # We can now add gaussian noise to the linear spectrum
     noisy_linear_synth_spectrum = linear_synth_spectrum + rng.normal(loc=0, scale=sigma, size=len(linear_synth_spectrum))
     # Finally, we convert it back to dB and return
