@@ -10,19 +10,17 @@ from scipy.ndimage import gaussian_filter
 def lorentzian(f, f0, hwhm, snr):
     return snr / (1 + ((f - f0) / hwhm)**2)
 
-def gen_samples(df, hwhm_max, snr_max):
-    # Allocate memory for data
-    samples = np.zeros((len(df), 8192, 4))
-    # Set the widths and snrs to None
-    samples[:, :, 2] = np.nan
-    samples[:, :, 3] = np.nan
-    # Get synthetic spectra (rows, N bins)
-    samples[:, :, 0] = np.stack(df['synthetic spectrum'])
+def gen_samples(df, hwhm_max=100, snr_max=25):
+    # Allocate memory for y (peak labels)
+    y = np.zeros((len(df), 8192, 3))
+    # Set the widths and snrs to -1
+    y[:, :, 1] = -1
+    y[:, :, 2] = -1
     # Get labels (rows, num_peaks)
     f0s = np.array(df['f0'], dtype=object)
     hwhms = np.array(df['hwhm'], dtype=object)
     snrs = np.array(df['snr'], dtype=object)
-    # Rescale peaks to be in range [0, 1]
+    # Rescale peaks to be in range ~[0, 1]
     hwhms = hwhms / hwhm_max
     snrs = snrs / snr_max
     # Grab frequency array
@@ -43,8 +41,9 @@ def gen_samples(df, hwhm_max, snr_max):
             # Get frequency array index corresponding to the peak location
             f0_index = np.where(f == f0)[0]
             # Add labels: [Yes/no peak, hwhm, snr]
-            samples[row, f0_index, 1:] = [1, hwhm, snr]
-    return samples
+            y[row, f0_index, :] = [1, hwhm, snr]
+    # Return X (rows, N bins) and y
+    return np.stack(df['synthetic spectrum']), y
 
 def estimate_noise_sigma(sample_spectrum, f=rfftfreq(32768, 1/44100), noise_domain='log'):
     # First, we crop frequency axis and sample spectrum to 8-11kHz as these won't have any peaks and are just noise
@@ -106,12 +105,8 @@ def synthesize_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
     hwhm_max_thin = 10
     hwhm_min_wide = 10
     hwhm_max_wide = 100
-    # For general, we'll draw from a chi-square
-    general_hwhm_dof = 5
-    general_hwhm_og_pivot = 20 # This is the value of the original distribution that we want to "grab"
-    general_hwhm_new_pivot = 150 # We'll rescale ("pull") the distribution so that that value becomes this value
+    # For general, we'll draw half from thin and half from wide
     
-
     # SNR: we'll draw from a chi-square distribution
     snr_chi_dof = 7
     snr_chi_og_pivot = 10 # This is the value of the original distribution that we want to "grab"
