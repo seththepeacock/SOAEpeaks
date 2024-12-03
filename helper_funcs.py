@@ -157,7 +157,7 @@ def synthesize_spectrum(parent_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
     
     # Number of peaks: we'll draw from chi-squares for Human/Lizard, uniform for General    
     if species == 'General':
-        gen_npeaks_min = 25
+        gen_npeaks_min = 20
         gen_npeaks_max = 35
         npeaks = rng.integers(gen_npeaks_min, gen_npeaks_max, endpoint=True)
     elif species == 'Lizard':
@@ -269,7 +269,6 @@ def synthesize_spectrum(parent_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
         axs[0].set_ylabel("dB SPL")
         axs[0].set_ylim(global_min, global_max)  # Set common y-limits
         peak_indices = peak_list[:, 0].astype(int)
-        print(np.sort(f[peak_indices]))
         axs[0].scatter(f[peak_indices] / 1000, synth_spectrum[peak_indices], color='red', label="True Peaks")
         axs[0].legend()
         # Plot the sample spectrum with noise floor on the second subplot
