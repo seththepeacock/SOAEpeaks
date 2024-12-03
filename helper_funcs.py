@@ -7,41 +7,39 @@ import statsmodels.api as sm
 from scipy.ndimage import gaussian_filter
 
 
-def lorentzian(f, f0, hwhm, snr):
-    return snr / (1 + ((f - f0) / hwhm)**2)
+def lorentzian(f, f0, hwhm, prominence):
+    return prominence / (1 + ((f - f0) / hwhm)**2)
 
-def gen_samples(df, hwhm_max=100, snr_max=25):
+def gen_samples(df, hwhm_max=100, prominence_max=25):
     # Allocate memory for y (peak labels)
     y = np.zeros((len(df), 8192, 3))
-    # Set the widths and snrs to -1
+    # Set the widths and prominences to -1
     y[:, :, 1] = -1
     y[:, :, 2] = -1
     # Get labels (rows, num_peaks)
-    f0s = np.array(df['f0'], dtype=object)
+    f0_i_s = np.array(df['f0_i'], dtype=object)
     hwhms = np.array(df['hwhm'], dtype=object)
-    snrs = np.array(df['snr'], dtype=object)
+    prominences = np.array(df['prominence'], dtype=object)
     # Rescale peaks to be in range ~[0, 1]
     hwhms = hwhms / hwhm_max
-    snrs = snrs / snr_max
+    prominences = prominences / prominence_max
     # Grab frequency array
     f = rfftfreq(32768, 1/44100)[0:8192]
     for row in range(len(df)):
         # Get the peak list components for this row
-        f0s_i = f0s[row]
-        hwhms_i = hwhms[row]
-        snrs_i = snrs[row]
-        if len(f0s_i) != len(hwhms_i) or len(f0s_i) != len(snrs_i):
-            raise ValueError("f0s, hwhms, and snrs must have the same length!")
+        f0_i_s_row = f0_i_s[row]
+        hwhms_row = hwhms[row]
+        prominences_row = prominences[row]
+        if len(f0_i_s_row) != len(hwhms_row) or len(f0_i_s_row) != len(prominences_row):
+            raise ValueError("f0s, hwhms, and prominences must have the same length!")
         # Add peak lists
-        for peak_num in range(len(f0s_i)):
+        for peak_num in range(len(f0_i_s_row)):
             # Get peak components
-            f0 = f0s_i[peak_num]
-            hwhm = hwhms_i[peak_num]
-            snr = snrs_i[peak_num]
-            # Get frequency array index corresponding to the peak location
-            f0_index = np.where(f == f0)[0]
-            # Add labels: [Yes/no peak, hwhm, snr]
-            y[row, f0_index, :] = [1, hwhm, snr]
+            f0_i = f0_i_s_row[peak_num]
+            hwhm = hwhms_row[peak_num]
+            prominence = prominences_row[peak_num]
+            # Add labels: [Yes/no peak, hwhm, prominence]
+            y[row, f0_i, :] = [1, hwhm, prominence]
     # Return X (rows, N bins) and y
     return np.stack(df['synthetic spectrum']), y
 
@@ -86,34 +84,34 @@ def gen_samples(df, hwhm_max=100, snr_max=25):
 #     return noisy_synth_spectrum
     
     
-def estimate_noise_sigma(sample_spectrum, f=rfftfreq(32768, 1/44100), noise_domain='log'):
+def estimate_noise_sigma(parent_spectrum, f=rfftfreq(32768, 1/44100), noise_domain='log'):
     # First, we crop frequency axis and sample spectrum to 8-11kHz as these won't have any peaks and are just noise
     f_min = np.argmin(np.abs(f - 8000))
     f_max = np.argmin(np.abs(f - 11000))
     f = f[f_min:f_max]
-    sample_spectrum = sample_spectrum[f_min:f_max]
+    parent_spectrum = parent_spectrum[f_min:f_max]
     # Next, we convert to linear scale (if specified)
     if noise_domain == 'linear':
-        sample_spectrum = 10**(sample_spectrum/20)
+        parent_spectrum = 10**(parent_spectrum/20)
     # Now we fit a noise floor estimate using LOWESS
     lowess = sm.nonparametric.lowess
     # This controls how tightly the fit is to the data
     frac = 0.1 # This value yielded a close but still smooth fit (too closely and we just follow the noise!)
-    noise_floor = lowess(sample_spectrum, f, frac=frac, return_sorted=False)
+    noise_floor = lowess(parent_spectrum, f, frac=frac, return_sorted=False)
     # The additive noise is then the difference between the sample spectrum and the noise floor
-    additive_noise = sample_spectrum - noise_floor
+    additive_noise = parent_spectrum - noise_floor
     # We assume this noise is normally distributed with mean zero. 
     # We now estimate the standard deviation using the MLE (since the mean is known, this is also unbiased):
     sigma = np.sqrt(np.mean((additive_noise)**2))
     return sigma
         
         
-def estimate_and_add_noise(synth_spectrum, sample_spectrum, f=rfftfreq(32768, 1/44100), rng=np.random.default_rng(), noise_domain='log'):
+def estimate_and_add_noise(synth_spectrum, parent_spectrum, f=rfftfreq(32768, 1/44100), rng=np.random.default_rng(), noise_domain='log'):
     # First we convert to linear scale (if specified)
     if noise_domain == 'linear':
         synth_spectrum = 10**(synth_spectrum/20)
     # Now we estimate the standard deviation of the additive noise of this sample spectrum
-    sigma = estimate_noise_sigma(sample_spectrum, f=f, noise_domain=noise_domain)
+    sigma = estimate_noise_sigma(parent_spectrum, f=f, noise_domain=noise_domain)
     # We can now add gaussian noise to the linear spectrum
     noisy_synth_spectrum = synth_spectrum + rng.normal(loc=0, scale=sigma, size=len(synth_spectrum))
     # Finally, we convert it back to dB (if necessary)
@@ -123,9 +121,9 @@ def estimate_and_add_noise(synth_spectrum, sample_spectrum, f=rfftfreq(32768, 1/
     return noisy_synth_spectrum
    
 
-def synthesize_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='General', filepath=None, plot=False, noise_domain='log'):
+def synthesize_spectrum(parent_spectrum, f=rfftfreq(32768, 1/44100), species='General', filepath=None, plot=False, save_name=None,noise_domain='log'):
     # Get noise floor
-    noise_floor = get_noise_floor(f, sample_spectrum)
+    noise_floor = get_noise_floor(f, parent_spectrum)
     
     # Get num bins
     n_bins = len(noise_floor)
@@ -140,7 +138,7 @@ def synthesize_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
     f0_chi_new_pivot = 6000 # We'll rescale ("pull") the distribution so that that value becomes this value
     
     # This is the minimum distance between peaks (so as to not penalize model for missing right peaks directly on top of each other)
-    f0_min_dist = 10
+    f0_min_dist = 50
 
     # hwhm: we'll draw from uniform distributions; 90% from thin and 10% from wide for human, vice versa for lizard
     hwhm_min_thin = 1
@@ -149,46 +147,50 @@ def synthesize_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
     hwhm_max_wide = 100
     # For general, we'll draw half from thin and half from wide
     
-    # SNR: we'll draw from a chi-square distribution
-    snr_chi_dof = 7
-    snr_chi_og_pivot = 10 # This is the value of the original distribution that we want to "grab"
-    snr_chi_new_pivot = 10 # We'll rescale ("pull") the distribution so that that value becomes this value
-    # snr_max = 30
-    
-    # Number of peaks: we'll draw from a uniform distribution
-    if species in ['Lizard', 'Anolis']:
-        num_peaks_min = 15
-        num_peaks_max = 25
-    elif species == 'Human':
-        num_peaks_min = 15
-        num_peaks_max = 25
-    elif species == 'General':
-        # We can fit more in since they're no longer concentrated with the chi-square
-        num_peaks_min = 35
-        num_peaks_max = 50
-        
+    # prominence: we'll draw from a chi-square distribution
+    prominence_chi_dof = 7
+    prominence_chi_og_pivot = 10 # This is the value of the original distribution that we want to "grab"
+    prominence_chi_new_pivot = 7.5 # We'll rescale ("pull") the distribution so that that value becomes this value
     
     # Create a Generator instance
     rng = np.random.default_rng()  # Default random generator instance
     
-    # Pick number of peaks
-    n_peaks = rng.integers(num_peaks_min, num_peaks_max, endpoint=True)
+    # Number of peaks: we'll draw from chi-squares for Human/Lizard, uniform for General    
+    if species == 'General':
+        gen_npeaks_min = 25
+        gen_npeaks_max = 35
+        npeaks = rng.integers(gen_npeaks_min, gen_npeaks_max, endpoint=True)
+    elif species == 'Lizard':
+        npeaks_chi_dof = 11
+        npeaks_chi_og_pivot = 20 # This is the value of the original distribution that we want to "grab"
+        npeaks_chi_new_pivot = 17 # We'll rescale ("pull") the distribution so that that value becomes this value
+        npeaks = int(rng.chisquare(npeaks_chi_dof)/npeaks_chi_og_pivot*npeaks_chi_new_pivot)  
+    elif species == 'Human':
+        npeaks_chi_dof = 3
+        npeaks_chi_og_pivot = 4 # This is the value of the original distribution that we want to "grab"
+        npeaks_chi_new_pivot = 5 # We'll rescale ("pull") the distribution so that that value becomes this value
+        npeaks = int(rng.chisquare(npeaks_chi_dof)/npeaks_chi_og_pivot*npeaks_chi_new_pivot)  
+    else:
+        raise ValueError("Unknown species!")
+
     
     # Initialize matrix to store all the different peaks to be added to the noisefloor
-    spec_components = np.empty((n_peaks + 1, n_bins))
+    spec_components = np.empty((npeaks + 1, n_bins))
     
     # Add noise floor
     spec_components[-1, :] = noise_floor
     
     # Create empty peak list
-    peak_list = np.empty((n_peaks, 3))
+    peak_list = np.empty((npeaks, 3))
+    # And a temporary one for spreading out peaks
+    f0s = [-1000]
     
     # Generate and add peaks
-    for i in range(n_peaks):
+    for i in range(npeaks):
         # Peak Position (f0):
         # Keep picking until we get a new peak position
         f0 = None
-        while f0 is None or np.abs(peak_list[:, 0] - f0).min() < f0_min_dist:
+        while f0 is None or np.abs(f0s - f0).min() < f0_min_dist:
             # For transfer dataset, we draw from a chi-square
             if species in ["Lizard", "Human", "Anolis"]:
                 # Draw positions from a chi-square and ensure it's below the spectral max
@@ -199,7 +201,9 @@ def synthesize_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
                 # Draw the positions from a uniform distribution across the frequency range
                 f0 = rng.uniform(f[0], f[-1])
             # Lock this onto the grid
-            f0 = f[np.argmin(np.abs(f - f0))]
+            f0_i = np.argmin(np.abs(f - f0))
+            f0 = f[f0_i]
+        f0s.append(f0)
         
         # Width (HWHM): 
         
@@ -225,21 +229,23 @@ def synthesize_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
 
 
         
-        # SNR
+        # prominence
         # Draw positions from a chi-square
-        snr = rng.chisquare(df=snr_chi_dof) * snr_chi_new_pivot / snr_chi_og_pivot
+        prominence = rng.chisquare(df=prominence_chi_dof) * prominence_chi_new_pivot / prominence_chi_og_pivot
         
         # Add peak
-        spec_components[i, :] = lorentzian(f, f0, hwhm, snr)
+        spec_components[i, :] = lorentzian(f, f0, hwhm, prominence)
         
         # Store peak info
-        peak_list[i, :] = [f0, hwhm, snr]
+        peak_list[i, :] = [f0_i, hwhm, prominence]
+        
         
     # Combine everything into the final synthetic spectrum
     synth_spectrum = np.sum(spec_components, axis=0)
     
     # Add gaussian noise
-    synth_spectrum  = estimate_and_add_noise(synth_spectrum, sample_spectrum, f=f, rng=rng, noise_domain=noise_domain)
+    synth_spectrum  = estimate_and_add_noise(synth_spectrum, parent_spectrum, f=f, rng=rng, noise_domain=noise_domain)
+    
     
     if plot:
         if species == 'General':
@@ -248,7 +254,7 @@ def synthesize_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
             f0_dist = 'Chi Square'
 
         # Compute the global y-limits for both graphs
-        all_values = [synth_spectrum, noise_floor, sample_spectrum]
+        all_values = [synth_spectrum, noise_floor, parent_spectrum]
         global_min = min([min(data) for data in all_values])
         global_max = max([max(data) for data in all_values])
 
@@ -258,28 +264,33 @@ def synthesize_spectrum(sample_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
         # Plot the synthetic spectrum on the first subplot
         axs[0].plot(f / 1000, synth_spectrum, label="Synthetic Spectrum")
         axs[0].plot(f / 1000, noise_floor, label="Noise Floor")
-        axs[0].set_title(f"Synthetic Spectrum: species={species}, {n_peaks} peaks, {f0_dist} position distribution")
+        axs[0].set_title(f"Synthetic Spectrum: species={species}, {npeaks} peaks, {f0_dist} position distribution")
         axs[0].set_xlabel("Frequency (kHz)")
         axs[0].set_ylabel("dB SPL")
-        axs[0].legend()
         axs[0].set_ylim(global_min, global_max)  # Set common y-limits
-        peak_indices = np.argmin(np.abs(f[:, None] - peak_list[:, 0]), axis=0)
-        axs[0].scatter(peak_list[:, 0] / 1000, synth_spectrum[peak_indices], color='red', label="Detected Peaks")
+        peak_indices = peak_list[:, 0].astype(int)
+        print(np.sort(f[peak_indices]))
+        axs[0].scatter(f[peak_indices] / 1000, synth_spectrum[peak_indices], color='red', label="True Peaks")
+        axs[0].legend()
         # Plot the sample spectrum with noise floor on the second subplot
-        axs[1].plot(f / 1000, sample_spectrum, label="Sample Spectrum")
+        axs[1].plot(f / 1000, parent_spectrum, label="Sample Spectrum")
         axs[1].plot(f / 1000, noise_floor, label="Noise Floor")
-        axs[1].set_title(f"Sample Spectrum: {filepath if filepath else 'No filepath provided'}")
+        axs[1].set_title(f"Parent Spectrum: {filepath if filepath else 'No filepath provided'}")
         axs[1].set_xlabel("Frequency (kHz)")
         axs[1].set_ylabel("dB SPL")
         axs[1].legend()
         axs[1].set_ylim(global_min, global_max)  # Set common y-limits
-
-        # Adjust the layout and show the plots
         plt.tight_layout()
-        plt.show()
+
+        # Save the figure or show plot
+        if save_name:
+            plt.savefig(save_name)
+        else: 
+            # Show the plots
+            plt.show()
 
     
-    return {'noise floor' : noise_floor, 'species' : species, 'synth spectrum' : synth_spectrum, 'f0' : peak_list[:, 0], 'hwhm' : peak_list[:, 1], 'snr' : peak_list[:, 2]}
+    return {'noise floor' : noise_floor, 'species' : species, 'synth spectrum' : synth_spectrum, 'f0_i' : peak_list[:, 0], 'hwhm' : peak_list[:, 1], 'prominence' : peak_list[:, 2]}
 
 def get_noise_floor(f, spectrum, lowess_frac = 0.3, smoothing_sigma = 150, initial_cutoff = 300):
     lowess_fit = sm.nonparametric.lowess(spectrum, f, frac=lowess_frac, return_sorted=False)
