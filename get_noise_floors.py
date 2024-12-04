@@ -14,9 +14,11 @@ species = df['species'].to_list()
 f = rfftfreq(32768, 1/44100)[0:8192]
 rows = []
 
-for spectrum, filepath, species in zip(spectrums, filepaths, species):
+for i, (spectrum, filepath, species) in enumerate(zip(spectrums, filepaths, species)):
     noise_floor = get_noise_floor(f, spectrum)
-    rows.append({"species":species, "noise floor":noise_floor, "filepath":filepath})
+    rows.append({"species":species, "noise floor":noise_floor, "filepath":filepath, "spectrum":spectrum})
+    if i > 3:
+        break
 
 noise_floors = pd.DataFrame(rows)
-noise_floors.to_parquet("noise_floors.parquet", engine='pyarrow')
+noise_floors.to_parquet("spectra_and_noise_floors.parquet", engine='pyarrow')

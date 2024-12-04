@@ -106,7 +106,7 @@ def estimate_noise_sigma(parent_spectrum, f=rfftfreq(32768, 1/44100), noise_doma
     return sigma
         
         
-def estimate_and_add_noise(synth_spectrum, parent_spectrum, f=rfftfreq(32768, 1/44100), rng=np.random.default_rng(), noise_domain='log'):
+def estimate_and_add_noise(synth_spectrum, parent_spectrum, f=rfftfreq(32768, 1/44100), rng=np.random.default_rng(), noise_domain='linear'):
     # First we convert to linear scale (if specified)
     if noise_domain == 'linear':
         synth_spectrum = 10**(synth_spectrum/20)
@@ -121,10 +121,7 @@ def estimate_and_add_noise(synth_spectrum, parent_spectrum, f=rfftfreq(32768, 1/
     return noisy_synth_spectrum
    
 
-def synthesize_spectrum(parent_spectrum, f=rfftfreq(32768, 1/44100), species='General', filepath=None, plot=False, save_name=None,noise_domain='log'):
-    # Get noise floor
-    noise_floor = get_noise_floor(f, parent_spectrum)
-    
+def synthesize_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100), species='General', filepath=None, plot=False, save_name=None,noise_domain='log'):
     # Get num bins
     n_bins = len(noise_floor)
     if n_bins != 8192:
@@ -141,7 +138,7 @@ def synthesize_spectrum(parent_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
     f0_min_dist = 50
 
     # hwhm: we'll draw from uniform distributions; 90% from thin and 10% from wide for human, vice versa for lizard
-    hwhm_min_thin = 1
+    hwhm_min_thin = 3
     hwhm_max_thin = 10
     hwhm_min_wide = 10
     hwhm_max_wide = 100
@@ -262,18 +259,18 @@ def synthesize_spectrum(parent_spectrum, f=rfftfreq(32768, 1/44100), species='Ge
         fig, axs = plt.subplots(2, 1, figsize=(10, 8))
 
         # Plot the synthetic spectrum on the first subplot
-        axs[0].plot(f / 1000, synth_spectrum, label="Synthetic Spectrum")
-        axs[0].plot(f / 1000, noise_floor, label="Noise Floor")
+        axs[0].scatter(f / 1000, synth_spectrum, label="Synthetic Spectrum", s=1)
+        axs[0].plot(f / 1000, noise_floor, label="Noise Floor", color='orange')
         axs[0].set_title(f"Synthetic Spectrum: species={species}, {npeaks} peaks, {f0_dist} position distribution")
         axs[0].set_xlabel("Frequency (kHz)")
         axs[0].set_ylabel("dB SPL")
         axs[0].set_ylim(global_min, global_max)  # Set common y-limits
         peak_indices = peak_list[:, 0].astype(int)
-        axs[0].scatter(f[peak_indices] / 1000, synth_spectrum[peak_indices], color='red', label="True Peaks")
+        axs[0].scatter(f[peak_indices] / 1000, synth_spectrum[peak_indices], color='red', label="True Peaks", s=1)
         axs[0].legend()
         # Plot the sample spectrum with noise floor on the second subplot
         axs[1].plot(f / 1000, parent_spectrum, label="Sample Spectrum")
-        axs[1].plot(f / 1000, noise_floor, label="Noise Floor")
+        axs[1].plot(f / 1000, noise_floor, label="Noise Floor", color='orange')
         axs[1].set_title(f"Parent Spectrum: {filepath if filepath else 'No filepath provided'}")
         axs[1].set_xlabel("Frequency (kHz)")
         axs[1].set_ylabel("dB SPL")
