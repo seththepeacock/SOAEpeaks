@@ -10,17 +10,22 @@ from scipy.ndimage import gaussian_filter
 def lorentzian(f, f0, hwhm, prominence):
     return prominence / (1 + ((f - f0) / hwhm)**2)
 
+def get_label_hw(hwhm):
+    return int((14/95)*hwhm + 5/19)
+
 def gen_samples(df, hwhm_max=100, prominence_max=25):
     # Allocate memory for y (peak labels)
-    y = np.zeros((len(df), 8192, 3))
+    y = np.zeros((len(df), 8192, 4))
+    # And for y_isolated_peakas
+    y_isolated_peaks = np.zeros((len(df), 8192))
     # Set the widths and prominences to -1
-    y[:, :, 1] = -1
     y[:, :, 2] = -1
+    y[:, :, 3] = -1
     # Get labels (rows, num_peaks)
     f0_i_s = np.array(df['f0_i'], dtype=object)
     hwhms = np.array(df['hwhm'], dtype=object)
     prominences = np.array(df['prominence'], dtype=object)
-    # Rescale peaks to be in range ~[0, 1]
+    # Rescale peaks to be in range ~[0, 1] (prominence could in principle be > 25 but this would be rare)
     hwhms = hwhms / hwhm_max
     prominences = prominences / prominence_max
     # Grab frequency array
@@ -38,10 +43,22 @@ def gen_samples(df, hwhm_max=100, prominence_max=25):
             f0_i = f0_i_s_row[peak_num]
             hwhm = hwhms_row[peak_num]
             prominence = prominences_row[peak_num]
-            # Add labels: [Yes/no peak, hwhm, prominence]
-            y[row, f0_i, :] = [1, hwhm, prominence]
-    # Return X (rows, N bins) and y
-    return np.stack(df['synthetic spectrum']), y
+            # First add isolated position labels
+            y_isolated_peaks[row, f0_i] = 1
+            # Now we need to calculate how many bins +\- to label
+            label_hw = get_label_hw(hwhm)
+            f0_i_labels = np.arange(f0_i - label_hw, f0_i + label_hw + 1)
+            for bin_to_label in f0_i_labels:
+                # Add labels: [Yes/no peak, hwhm, prominence]
+                y[row, bin_to_label, :] = [1, hwhm, prominence]
+    X_x = np.stack(df['synthetic spectrum'])
+    min_vals = np.min(X_x, axis=1)  # Minimum along the rows
+    max_vals = np.max(X_x, axis=1)  # Maximum along the rows
+    mins_maxes = {"mins": min_vals, "maxes": max_vals}
+    # Rescale
+    X_x = (X_x - min_vals[:, None]) / (max_vals - min_vals)
+    # Return X (rows, N bins), y, and mins/maxes
+    return X_x, y, mins_maxes, y_isolated_peaks
 
 # def estimate_noise_sigma(sample_spectrum, f=rfftfreq(32768, 1/44100), noise_domain='log'):
 #     sigmas = np.empty(16)
@@ -148,6 +165,10 @@ def synthesize_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100)
     prominence_chi_dof = 7
     prominence_chi_og_pivot = 10 # This is the value of the original distribution that we want to "grab"
     prominence_chi_new_pivot = 7.5 # We'll rescale ("pull") the distribution so that that value becomes this value
+    # slightly different one for humans (higher peaks)
+    human_prominence_chi_dof = 7
+    human_prominence_chi_og_pivot = 10 # This is the value of the original distribution that we want to "grab"
+    human_prominence_chi_new_pivot = 10 # We'll rescale ("pull") the distribution so that that value becomes this value
     
     # Create a Generator instance
     rng = np.random.default_rng()  # Default random generator instance
@@ -226,10 +247,12 @@ def synthesize_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100)
 
 
         
-        # prominence
-        # Draw positions from a chi-square
-        prominence = rng.chisquare(df=prominence_chi_dof) * prominence_chi_new_pivot / prominence_chi_og_pivot
-        
+        # Draw prominence
+        if species == 'Human':
+            prominence = rng.chisquare(df=human_prominence_chi_dof) * human_prominence_chi_new_pivot / human_prominence_chi_og_pivot
+        else:
+            prominence = rng.chisquare(df=prominence_chi_dof) * prominence_chi_new_pivot / prominence_chi_og_pivot
+           
         # Add peak
         spec_components[i, :] = lorentzian(f, f0, hwhm, prominence)
         

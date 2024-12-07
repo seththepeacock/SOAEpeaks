@@ -27,7 +27,7 @@ i=0
 for spectrum, species, filepath in zip(spectra, species_list, filepaths):
     i += 1
     print(f"Synthesizing {i} / {len(spectra)}")
-    d = synthesize_spectrum(spectrum, f=f, species=species, filepath=filepath, noise_domain='log')
+    d = synthesize_spectrum(spectrum, f=f, species=species, filepath=filepath, noise_domain='linear')
     rows.append(d)
 synth_transfer_df = pd.DataFrame(rows)
 synth_transfer_df.to_parquet("synth_transfer_df.parquet", engine='pyarrow')
@@ -38,7 +38,7 @@ i = 0
 for spectrum, species, filepath in zip(spectra, species_list, filepaths):
     i += 1
     print(f"Synthesizing {i} / {len(spectra)}")
-    d = synthesize_spectrum(spectrum, f=f, species='General', filepath=filepath, noise_domain='log')
+    d = synthesize_spectrum(spectrum, f=f, species='General', filepath=filepath, noise_domain='linear')
     rows.append(d)
 synth_general_df = pd.DataFrame(rows)
 synth_general_df.to_parquet("synth_general_df.parquet", engine='pyarrow')
