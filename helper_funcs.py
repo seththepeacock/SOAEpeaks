@@ -10,52 +10,54 @@ def lorentzian(f, f0, hwhm, prominence):
     return prominence / (1 + ((f - f0) / hwhm)**2)
 
 def get_label_hw(hwhm):
-    return int((14/95)*hwhm + 5/19)
+    return ((14 / 95) * hwhm + 5 / 19).astype(int)
 
 def gen_samples(df, hwhm_max=100, prominence_max=25):
+    f_length = 8192
     # Allocate memory for y (peak labels)
-    y = np.zeros((len(df), 8192, 4))
-    # And for y_isolated_peakas
-    y_isolated_peaks = np.zeros((len(df), 8192))
+    y = np.zeros((len(df), f_length, 3))
+    # And for y_isolated_peaks
+    y_isolated_peaks = np.zeros((len(df), f_length))
     # Set the widths and prominences to -1
+    y[:, :, 1] = -1
     y[:, :, 2] = -1
-    y[:, :, 3] = -1
     # Get labels (rows, num_peaks)
     f0_i_s = np.array(df['f0_i'], dtype=object)
     hwhms = np.array(df['hwhm'], dtype=object)
     prominences = np.array(df['prominence'], dtype=object)
     # Rescale peaks to be in range ~[0, 1] (prominence could in principle be > 25 but this would be rare)
-    hwhms = hwhms / hwhm_max
+    hwhms_scaled = hwhms / hwhm_max
     prominences = prominences / prominence_max
     # Grab frequency array
-    f = rfftfreq(32768, 1/44100)[0:8192]
     for row in range(len(df)):
         # Get the peak list components for this row
         f0_i_s_row = f0_i_s[row]
+        hwhms_scaled_row = hwhms_scaled[row]
         hwhms_row = hwhms[row]
         prominences_row = prominences[row]
-        if len(f0_i_s_row) != len(hwhms_row) or len(f0_i_s_row) != len(prominences_row):
+        if len(f0_i_s_row) != len(hwhms_scaled_row) or len(f0_i_s_row) != len(prominences_row):
             raise ValueError("f0s, hwhms, and prominences must have the same length!")
         # Add peak lists
         for peak_num in range(len(f0_i_s_row)):
             # Get peak components
-            f0_i = f0_i_s_row[peak_num]
-            hwhm = hwhms_row[peak_num]
+            f0_i = int(f0_i_s_row[peak_num])
+            hwhm_scaled = hwhms_scaled_row[peak_num]
             prominence = prominences_row[peak_num]
             # First add isolated position labels
             y_isolated_peaks[row, f0_i] = 1
             # Now we need to calculate how many bins +\- to label
-            label_hw = get_label_hw(hwhm)
-            f0_i_labels = np.arange(f0_i - label_hw, f0_i + label_hw + 1)
+            label_hw = get_label_hw(hwhms_row[peak_num])
+            # min/max is to make sure we don't go out of bounds
+            f0_i_labels = np.arange(max(f0_i - label_hw, 0), min(f0_i + label_hw + 1, f_length - 1))
             for bin_to_label in f0_i_labels:
-                # Add labels: [Yes/no peak, hwhm, prominence]
-                y[row, bin_to_label, :] = [1, hwhm, prominence]
-    X_x = np.stack(df['synthetic spectrum'])
+                # Add labels: [Yes/no peak, hwhm_scaled, prominence]
+                y[row, bin_to_label, :] = [1, hwhm_scaled, prominence]
+    X_x = np.stack(df['synth spectrum'])
     min_vals = np.min(X_x, axis=1)  # Minimum along the rows
     max_vals = np.max(X_x, axis=1)  # Maximum along the rows
     mins_maxes = {"mins": min_vals, "maxes": max_vals}
     # Rescale
-    X_x = (X_x - min_vals[:, None]) / (max_vals - min_vals)
+    X_x = (X_x - min_vals[:, None]) / (max_vals[:, None] - min_vals[:, None])
     # Return X (rows, N bins), y, and mins/maxes
     return X_x, y, mins_maxes, y_isolated_peaks 
     
