@@ -100,12 +100,21 @@ def synthesize_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100)
     if n_bins != 8192:
         raise ValueError(f"Expected noise floor to be 8192 bins, but it's {n_bins} bins!")
     
+    # Rename Anolis --> Lizard
+    if species == 'Anolis':
+        species = 'Lizard'
+        
     # Set generation parameters
     
     # f0: For the transfer dataset, we'll draw from a chi square (for general, just uniform across length of data)
     f0_chi_dof = 5
     f0_chi_og_pivot = 10 # This is the value of the original distribution that we want to "grab"
     f0_chi_new_pivot = 6000 # We'll rescale ("pull") the distribution so that that value becomes this value
+    # For lizards, this chi square draw will set the center of a uniform distribution to draw from with width
+    lizard_center_chi_dof = 23
+    lizard_center_chi_og_pivot = 10
+    lizard_center_chi_new_pivot = 1200
+    lizard_unif_width = 1500
     
     # This is the minimum distance between peaks (so as to not penalize model for missing right peaks directly on top of each other)
     f0_min_dist = 50
@@ -120,7 +129,7 @@ def synthesize_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100)
     # prominence: we'll draw from a chi-square distribution
     prominence_chi_dof = 7
     prominence_chi_og_pivot = 10 # This is the value of the original distribution that we want to "grab"
-    prominence_chi_new_pivot = 7.5 # We'll rescale ("pull") the distribution so that that value becomes this value
+    prominence_chi_new_pivot = 8 # We'll rescale ("pull") the distribution so that that value becomes this value
     # slightly different one for humans (higher peaks)
     human_prominence_chi_dof = 7
     human_prominence_chi_og_pivot = 10 # This is the value of the original distribution that we want to "grab"
@@ -137,7 +146,7 @@ def synthesize_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100)
     elif species == 'Lizard':
         npeaks_chi_dof = 11
         npeaks_chi_og_pivot = 20 # This is the value of the original distribution that we want to "grab"
-        npeaks_chi_new_pivot = 17 # We'll rescale ("pull") the distribution so that that value becomes this value
+        npeaks_chi_new_pivot = 18 # We'll rescale ("pull") the distribution so that that value becomes this value
         npeaks = int(rng.chisquare(npeaks_chi_dof)/npeaks_chi_og_pivot*npeaks_chi_new_pivot)  
     elif species == 'Human':
         npeaks_chi_dof = 3
@@ -159,24 +168,37 @@ def synthesize_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100)
     # And a temporary one for spreading out peaks
     f0s = [-1000]
     
+    if species == 'Lizard':
+        # Pick f0 to be the center of the distribution and ensure it's below the spectral max
+        lizard_center = None  # Initialize to ensure the loop starts
+        while lizard_center is None or lizard_center > f[-1]:
+            lizard_center = rng.chisquare(df=lizard_center_chi_dof) * lizard_center_chi_new_pivot / lizard_center_chi_og_pivot
+    
     # Generate and add peaks
     for i in range(npeaks):
         # Peak Position (f0):
-        # Keep picking until we get a new peak position
-        f0 = None
-        while f0 is None or np.abs(f0s - f0).min() < f0_min_dist:
-            # For transfer dataset, we draw from a chi-square
-            if species in ["Lizard", "Human", "Anolis"]:
-                # Draw positions from a chi-square and ensure it's below the spectral max
-                f0 = None  # Initialize to ensure the loop starts
-                while f0 is None or f0 > f[-1]:
-                    f0 = rng.chisquare(df=f0_chi_dof) * f0_chi_new_pivot / f0_chi_og_pivot
-            elif species == 'General':
-                # Draw the positions from a uniform distribution across the frequency range
-                f0 = rng.uniform(f[0], f[-1])
-            # Lock this onto the grid
-            f0_i = np.argmin(np.abs(f - f0))
-            f0 = f[f0_i]
+        if species == 'Lizard' and rng.uniform(0, 1) < 0.9:
+            # For lizards, we grab 90% from a uniform distribution that is centered around the picked lizard_center
+            f0 = None
+            while f0 is None or np.abs(np.array(f0s) - f0).min() < f0_min_dist:
+                f0 = rng.uniform(lizard_center - lizard_unif_width, lizard_center + lizard_unif_width)
+        else:
+            # This was the original plan; we just grab from the chi square distribution
+            # Keep picking until we get a new peak position
+            f0 = None
+            while f0 is None or np.abs(np.array(f0s) - f0).min() < f0_min_dist:
+                # For transfer dataset, we draw from a chi-square
+                if species in ["Human", "Lizard"]:
+                    # Draw positions from a chi-square and ensure it's below the spectral max
+                    f0 = None  # Initialize to ensure the loop starts
+                    while f0 is None or f0 > f[-1]:
+                        f0 = rng.chisquare(df=f0_chi_dof) * f0_chi_new_pivot / f0_chi_og_pivot
+                elif species == 'General':
+                    # Draw the positions from a uniform distribution across the frequency range
+                    f0 = rng.uniform(f[0], f[-1])
+        # Now we have an f0; lock this onto the grid and add to f0s
+        f0_i = np.argmin(np.abs(f - f0))
+        f0 = f[f0_i]
         f0s.append(f0)
         
         # Width (HWHM): 
