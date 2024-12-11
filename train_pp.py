@@ -15,6 +15,17 @@ import pickle
 import matplotlib.pyplot as plt
 import time
 
+# Set parameters
+k=3
+peak_encourage=1
+include_LSTM=False
+epochs = 1
+lr = 0.001
+
+model_version = f"V1_k-{k}_PE-{peak_encourage}_LSTM-{include_LSTM}_Epochs-{epochs}_LR-{lr}"
+batch_size = 32
+patience = 3
+threshold_list = [0.05, 0.1, 0.15, 0.2]
 
 # First navigate to our directory
 transfer_directory_path = os.path.join("Data", "synth_transfer_df.parquet")
@@ -41,7 +52,7 @@ test_df, val_df = train_test_split(
     temp_df,
     test_size=0.5,
     stratify=temp_df['species'],  # Stratify again to maintain balance
-    random_state=rs
+    random_state=rs + 1
 )
 
 # Prepare samples
@@ -52,43 +63,35 @@ X_test, y_test, mins_maxes_test, isolated_peaks_test = gen_samples(test_df)
 print("Generating Validation Samples")
 X_val, y_val, mins_maxes_val, isolated_peaks_val = gen_samples(val_df)
 
-k=3
-peak_encourage=10
-LSTM=False
-epochs = 1
-lr = 0.001
-model_version = f"V1_k-{k}_PE-{peak_encourage}_LSTM-{LSTM}_Epochs-{epochs}_LR-{lr}"
-batch_size = 32
-patience = 5
+# Expand axes for conv layers
+X_train = np.expand_dims(X_train, axis=-1)
+X_val = np.expand_dims(X_val, axis=-1)
+X_test = np.expand_dims(X_test, axis=-1)
 
+# Define custom loss and metric callbacks
 def custom_loss(y_true, y_pred):
     """
     Custom loss function using predictions and weights.
     """
     # Compute binary cross-entropy loss
-    # bce_loss = tf.keras.backend.binary_crossentropy(y_true[:, :, 0], y_pred[:, :, 0])  # Shape (batch_size, N)
-    bce_loss = tf.keras.backend.binary_crossentropy(y_true, y_pred)  # Shape (batch_size, N)
+    bce_loss = tf.keras.backend.binary_crossentropy(y_true[:, :, 0], y_pred[:, :, 0])  # Shape (batch_size, N)
 
-    # prom is the 3rd node label, shape (batch_size, N)
+    # prom = y_true[:, :, 2] is the 3rd node label, shape (batch_size, N)
     # If prom < 0, weight is 1 (weight of BCE loss for non-peak bins), else apply weight_func
-    # weights = tf.where(prom < 0, tf.ones_like(y_true[:, : 2]), peak_encourage/(1+tf.exp(k-prom)))  
-    # # Apply weights
-    # weighted_bce_loss = bce_loss * weights  # Shape (batch_size, bins_per_sample)
+    weights = tf.where(y_true[:, :, 2] < 0, tf.ones_like(y_true[:, :, 2]), peak_encourage/(1+tf.exp(k-y_true[:, :, 2])))  
+    # Apply weights
+    weighted_bce_loss = bce_loss * weights  # Shape (batch_size, bins_per_sample)
 
-    # # Average loss across all samples and bins
-    # total_loss = tf.reduce_mean(weighted_bce_loss)  # Scalar
-    total_loss = tf.reduce_mean(bce_loss)  # Scalar
+    # Average loss across all samples and bins
+    total_loss = tf.reduce_mean(weighted_bce_loss)  # Scalar
 
     return total_loss
 
 
 
-threshold_list = [0.05, 0.1, 0.15, 0.2]
-
-
 def peak_counting_error(isolated_peaks_val, val_predictions):
     # Just grab the labels since we're ignoring width and height
-    # val_predictions = val_predictions[:, :, 0]
+    val_predictions = val_predictions[:, :, 0]
     M = isolated_peaks_val.shape[0] # Number of samples
     assert M == val_predictions.shape[0], "Mismatch in number of samples!"
     best_error = 10000  # Initial large value for minimizing error
@@ -218,7 +221,6 @@ class TimeHistory(tf.keras.callbacks.Callback):
         epoch_time = time.time() - self.epoch_start_time  # Calculate epoch duration
         self.epoch_times.append(epoch_time)  # Save to list
 
-
 # Define the input length / number of frequency bins (N)
 N = 8192
 
@@ -242,7 +244,7 @@ concat_layer = Concatenate(name="Inception_Concat")(convs)
 # Time Distributed Dense Layers
 td_dense64 = TimeDistributed(Dense(64, activation='relu'), name="Dense_64")(concat_layer)
 td_dense32A = TimeDistributed(Dense(32, activation='relu'), name="Dense_32A")(td_dense64)
-if LSTM:
+if include_LSTM:
     bd_LSTM = Bidirectional(LSTM(16, return_sequences=True), name="LSTM")(td_dense32A)
     td_dense32B = TimeDistributed(Dense(32, activation='relu'), name="Dense_32B")(bd_LSTM)
 else:
@@ -267,6 +269,7 @@ model.compile(
     loss=custom_loss
 )
 
+model.summary()
 
 
 start_time = time.time()
@@ -276,8 +279,8 @@ time_callback = TimeHistory()
 
 # Add callbacks for better training
 callbacks = [
-    # ValidationMetricCallback(validation_data=(X_val, (y_val, isolated_peaks_val)), metric_name="peak_counting_error"),
-    # EarlyStopping(monitor="peak_counting_error", patience=patience, restore_best_weights=True, verbose=1),  # Stop if no improvement for 5 epochs
+    ValidationMetricCallback(validation_data=(X_val, (y_val, isolated_peaks_val)), metric_name="peak_counting_error"),
+    EarlyStopping(monitor="val_loss", patience=patience, restore_best_weights=True, verbose=1),  # Stop if no improvement for 5 epochs
     ModelCheckpoint(model_path, save_best_only=True, monitor='val_loss'),  # Save the best model
     time_callback
 ]

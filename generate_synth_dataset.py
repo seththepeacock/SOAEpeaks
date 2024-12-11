@@ -30,7 +30,10 @@ for spectrum, noise_floor, species, filepath in zip(spectra, noise_floors, speci
     i += 1
     print(f"Synthesizing {i} / {len(spectra)}")
     d = synthesize_spectrum(spectrum, noise_floor, f=f, species=species, filepath=filepath, noise_domain='linear')
-    rows.append(d)
+    if any(math.isnan(x) for x in d['synth spectrum']):
+        print("Excluding this one")
+    else:
+        rows.append(d)
 synth_transfer_df = pd.DataFrame(rows)
 synth_transfer_df.to_parquet("synth_transfer_df.parquet", engine='pyarrow')
 
@@ -42,6 +45,9 @@ for spectrum, noise_floor, species, filepath in zip(spectra, noise_floors, speci
     i += 1
     print(f"Synthesizing {i} / {len(spectra)}")
     d = synthesize_spectrum(spectrum, noise_floor, f=f, species='General', filepath=filepath, noise_domain='linear')
-    rows.append(d)
+    if any(math.isnan(x) for x in d['synth spectrum']):
+        print("Excluding this one")
+    else:
+        rows.append(d)
 synth_general_df = pd.DataFrame(rows)
 synth_general_df.to_parquet("synth_general_df.parquet", engine='pyarrow')

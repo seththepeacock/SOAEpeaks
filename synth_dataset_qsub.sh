@@ -2,7 +2,7 @@
 
 #PBS -N noise_floors_SOAE
 #PBS -A PAS2038
-#PBS -l walltime=3:00:00
+#PBS -l walltime=1:00:00
 #PBS -l nodes=1:ppn=8
 #PBS -j oe
 #SBATCH --mail-user=seththepeacock@gmail.com
