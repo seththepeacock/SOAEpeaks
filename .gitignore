@@ -2,6 +2,10 @@
 *.parquet
 Data/
 Peak Picker PDFs/
+Misc/
+setenenv/
+Chris Code/
+PP Models LESS THRESH/
 
 
 # Byte-compiled / optimized / DLL files
