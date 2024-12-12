@@ -20,7 +20,7 @@ import time
 # Set parameters
 include_LSTM = False
 for peak_encourage in [15, 5, 10, 1]:
-    k=3
+    k=0
     epochs = 15
     lr = 0.001
     model_version = f"V1_k-{k}_PE-{peak_encourage}_LSTM-{include_LSTM}_Epochs-{epochs}_LR-{lr}"
