@@ -259,7 +259,7 @@ def synthesize_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100)
             f0_dist = 'Chi Square'
 
         # Compute the global y-limits for both graphs
-        all_values = [synth_spectrum, noise_floor, parent_spectrum]
+        all_values = [synth_spectrum[100:], noise_floor[100:], parent_spectrum[100:]]
         global_min = min([min(data) for data in all_values])
         global_max = max([max(data) for data in all_values])
 
@@ -267,22 +267,23 @@ def synthesize_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100)
         fig, axs = plt.subplots(2, 1, figsize=(10, 8))
 
         # Plot the synthetic spectrum on the first subplot
-        axs[0].scatter(f / 1000, synth_spectrum, label="Synthetic Spectrum", s=1)
-        axs[0].plot(f / 1000, noise_floor, label="Noise Floor", color='orange')
-        axs[0].set_title(f"Synthetic Spectrum: species={species}, {npeaks} peaks, {f0_dist} position distribution")
-        axs[0].set_xlabel("Frequency (kHz)")
-        axs[0].set_ylabel("dB SPL")
+        axs[0].plot(f / 1000, synth_spectrum, label="Synthetic Spectrum", zorder=1)
+        axs[0].plot(f / 1000, noise_floor, label="Noise Floor", color='orange', zorder=2)
+        axs[0].set_title(f"Synthetic {species} Spectrum", fontsize=16)
+        axs[0].set_xlabel("Frequency (kHz)", fontsize=14)
+        axs[0].set_ylabel("dB SPL", fontsize=14)
         axs[0].set_ylim(global_min, global_max)  # Set common y-limits
         peak_indices = peak_list[:, 0].astype(int)
-        axs[0].scatter(f[peak_indices] / 1000, synth_spectrum[peak_indices], color='red', label="True Peaks", s=1)
-        axs[0].legend()
+        axs[0].scatter(f[peak_indices] / 1000, synth_spectrum[peak_indices], color='red', label="True Peaks", s=20, zorder=3)
+        axs[0].legend(fontsize=12)
         # Plot the sample spectrum with noise floor on the second subplot
         axs[1].plot(f / 1000, parent_spectrum, label="Sample Spectrum")
         axs[1].plot(f / 1000, noise_floor, label="Noise Floor", color='orange')
-        axs[1].set_title(f"Parent Spectrum: {filepath if filepath else 'No filepath provided'}")
-        axs[1].set_xlabel("Frequency (kHz)")
-        axs[1].set_ylabel("dB SPL")
-        axs[1].legend()
+        # axs[1].set_title(f"Parent Spectrum: {filepath if filepath else 'No filepath provided'}")
+        axs[1].set_title(f"Parent Spectrum", fontsize=16)
+        axs[1].set_xlabel("Frequency (kHz)", fontsize=14)
+        axs[1].set_ylabel("dB SPL", fontsize=14)
+        axs[1].legend(fontsize=12)
         axs[1].set_ylim(global_min, global_max)  # Set common y-limits
         plt.tight_layout()
 
