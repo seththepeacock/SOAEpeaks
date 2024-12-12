@@ -1,5 +1,3 @@
-%load_ext autoreload
-%autoreload 2
 import os
 import pandas as pd
 import tensorflow as tf
