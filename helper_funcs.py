@@ -5,7 +5,7 @@ from pathlib import Path
 from scipy.fft import rfft, rfftfreq
 import statsmodels.api as sm
 from scipy.ndimage import gaussian_filter
-import math
+from scipy.signal import welch, get_window
 
 def lorentzian(f, f0, hwhm, prominence):
     return prominence / (1 + ((f - f0) / hwhm)**2)
@@ -61,8 +61,6 @@ def gen_samples(df, hwhm_max=100, prominence_max=25):
     X_x = (X_x - min_vals[:, None]) / (max_vals[:, None] - min_vals[:, None])
     # Return X (rows, N bins), y, and mins/maxes
     return X_x, y, mins_maxes, y_isolated_peaks 
-
-
     
 def estimate_noise_sigma(parent_spectrum, f=rfftfreq(32768, 1/44100), noise_domain='linear'):
     # First, we crop frequency axis and sample spectrum to 8-11kHz as these won't have any peaks and are just noise
@@ -297,8 +295,6 @@ def synthesize_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100)
     
     return {'noise floor' : noise_floor, 'species' : species, 'synth spectrum' : synth_spectrum, 'f0_i' : peak_list[:, 0], 'hwhm' : peak_list[:, 1], 'prominence' : peak_list[:, 2]}
 
-
-
 def get_noise_floor(f, spectrum, lowess_frac = 0.3, smoothing_sigma = 150, initial_cutoff = 300):
     lowess_fit = sm.nonparametric.lowess(spectrum, f, frac=lowess_frac, return_sorted=False)
     min_spectrum = np.minimum(lowess_fit, spectrum)
@@ -326,16 +322,8 @@ def load_df(laptop=False, dfs_to_load=["York Data 1"]):
     print("Combining into one Dataframe!")
     return pd.concat(dfs, ignore_index=True)
 
-def process_wfs(df):
+def process_wfs(df, og_chris=False):
     """Take FFT of all raw waveforms in the dataframe and convert to dB SPL"""
-    # Define constants that allow us to correct for experimental setup
-    amp_factor = 0.01  # Correct for amplifier gain
-    mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
-    rms_factor = np.sqrt(2)  # Converts to RMS value
-
-    # Define window length
-    n_win = 32768
-
     # Track where we're at
     n_wf = (df['sr'] != 0).sum()
     n_current = 0
@@ -350,17 +338,9 @@ def process_wfs(df):
 
         # Get waveform and samplerate
         wf = row['wf']
-        sr = row['sr']
 
-        # Divide the waveform into windows of length n_win, take magnitude of FFT of each
-        mags_list = [
-            np.abs(rfft(wf[i * n_win:(i + 1) * n_win])*(2/n_win))
-            for i in range(len(wf) // n_win)
-        ]
+        db_SPL = get_periodogram_og_chris(wf)
 
-        # Average over all windows
-        avg_mags = np.mean(mags_list, axis=0)
-        db_SPL = 20 * np.log10(avg_mags * amp_factor * rms_factor / mic_factor)
         # Update the DataFrame directly
         df.at[idx, 'spectrum'] = db_SPL
         # Remove waveform for space
@@ -368,6 +348,70 @@ def process_wfs(df):
         # No need to store freq ax, as these can be generated via rfftfreq(n_win, 1 / sr)
         
     return df
+
+def get_periodogram_og_chris(wf, rms_factor=True):
+    # Define window length
+    n_win = 32768
+    
+    # Define constants that allow us to correct for experimental setup
+    amp_factor = 0.01  # Correct for amplifier gain
+    mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
+    if rms_factor:
+        rms_factor = np.sqrt(2)  # Converts to RMS value
+    else:
+        rms_factor = 1
+    # Divide the waveform into windows of length n_win, take magnitude of FFT of each
+    mags_list = [
+        np.abs(rfft(wf[i * n_win:(i + 1) * n_win])*(2/n_win))
+        for i in range(len(wf) // n_win)
+    ]
+
+    # Average over all windows
+    avg_mags = np.mean(mags_list, axis=0)
+    return 20 * np.log10(avg_mags * amp_factor * rms_factor / mic_factor)
+    
+def get_welch(wf, shift_prop=0.5, win_type='hann', num_wins=None):
+    # Define window length
+    n_win = 32768
+    n_shift = int(n_win*shift_prop)
+    
+    # Define constants that allow us to correct for experimental setup
+    amp_factor = 0.01  # Correct for amplifier gain
+    mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
+    
+    # Rescale waveform
+    wf = wf * amp_factor / mic_factor
+    
+    n_possible_win_starts = len(wf) - n_win # Number of samples that could be a start of a sample
+    n_full_wins_from_possible_win_starts = np.floor(n_possible_win_starts / n_shift) # Number of full windows we can get out of this set
+    max_num_wins = n_full_wins_from_possible_win_starts + 1 # Add one more because the final sample in n_possible_win_starts can always be a sample (though the real start will likely be before this)
+    num_wins_final = int(min(num_wins, max_num_wins)) if num_wins is not None else int(max_num_wins) # Use num_wins if provided and valid, otherwise use the maximum number of windows we can get
+    
+    window = get_window(win_type, n_win)
+    norm = 2*np.ones((n_win // 2) + 1) # Multiply by two for real FFT (only using half the frequencies)
+    norm[0] = 1  # ...except for the DC and
+    norm[-1] = 1 # Nyquist frequencies
+    norm /= np.sum(window)**2 # Squared sum of window coefficients for window normalization (just N for rectangle)
+    
+    # Divide the waveform into windows of length n_win, take magnitude of FFT of each
+    powers_list = [
+        norm*np.abs(rfft(wf[i*n_shift : i*n_shift + n_win]*window))**2 # Each new window has a start index that's n_shift more than the last
+        for i in range(num_wins_final)
+    ]
+
+    # Average over all windows
+    avg_powers = np.mean(powers_list, axis=0)
+    return 10 * np.log10(avg_powers)
+
+def get_scipy_welch(wf, shift_prop=0.5, win_type='hann'):
+    n_win = 32768
+    noverlap = int(shift_prop * n_win)
+    amp_factor = 0.01  # Correct for amplifier gain
+    mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
+    wf = wf * amp_factor / mic_factor
+
+    return 10 * np.log10(welch(wf, fs=1, nperseg=n_win, noverlap=noverlap, window=win_type, scaling='spectrum')[1])
+    
 
 def homogenize_df(df, species=["Human", "Lizard", "Anolis"]):
     """ Throws out bad samples and crops longer spectra to the right length
@@ -435,184 +479,3 @@ def max_min_df(df):
     df['min'] = spec_min
     
     return df
-
-
-
-
-
-
-# def synthesize_simple_spectrum(parent_spectrum, noise_floor, f=rfftfreq(32768, 1/44100), species='General', filepath=None, plot=False, save_name=None, noise_domain='linear'):
-#     # Get num bins
-#     n_bins = len(noise_floor)
-#     if n_bins != 8192:
-#         raise ValueError(f"Expected noise floor to be 8192 bins, but it's {n_bins} bins!")
-    
-#     npeaks = 1
-#     spec_components = np.empty((npeaks + 1, n_bins))
-    
-#     # Create a Generator instance
-#     rng = np.random.default_rng()  # Default random generator instance
-    
-#     # Add noise floor
-#     spec_components[-1, :] = noise_floor
-    
-#     # Create empty peak list
-#     peak_list = np.empty((npeaks, 3))
-#     # And a temporary one for spreading out peaks
-#     f0s = [-1000]
-    
-#     # Generate and add peaks
-#     for i in range(npeaks):
-#         # Peak Position (f0):
-#         f0 = rng.uniform(f[0], f[-1])
-        
-#         # Now we have an f0; lock this onto the grid and add to f0s
-#         f0_i = np.argmin(np.abs(f - f0))
-#         f0 = f[f0_i]
-#         f0s.append(f0)
-        
-#         # Width (HWHM): 
-#         hwhm = rng.uniform(3, 100)
-
-#         prominence = rng.uniform(1, 20)
-        
-#         # Add peak
-#         spec_components[i, :] = lorentzian(f, f0, hwhm, prominence)
-        
-#         # Store peak info
-#         peak_list[i, :] = [f0_i, hwhm, prominence]
-        
-        
-#     # Combine everything into the final synthetic spectrum
-#     synth_spectrum = np.sum(spec_components, axis=0)
-    
-#     # Add gaussian noise
-#     synth_spectrum  = estimate_and_add_noise(synth_spectrum, parent_spectrum, f=f, rng=rng, noise_domain=noise_domain)
-    
-    
-#     if plot:
-
-#         # Compute the global y-limits for both graphs
-#         all_values = [synth_spectrum, noise_floor, parent_spectrum]
-#         global_min = min([min(data) for data in all_values])
-#         global_max = max([max(data) for data in all_values])
-
-#         # Create the subplots
-#         fig, axs = plt.subplots(2, 1, figsize=(10, 8))
-
-#         # Plot the synthetic spectrum on the first subplot
-#         axs[0].scatter(f / 1000, synth_spectrum, label="Synthetic Spectrum", s=1)
-#         axs[0].plot(f / 1000, noise_floor, label="Noise Floor", color='orange')
-#         axs[0].set_title(f"Synthetic Spectrum: species={species}, {npeaks} peaks")
-#         axs[0].set_xlabel("Frequency (kHz)")
-#         axs[0].set_ylabel("dB SPL")
-#         axs[0].set_ylim(global_min, global_max)  # Set common y-limits
-#         peak_indices = peak_list[:, 0].astype(int)
-#         axs[0].scatter(f[peak_indices] / 1000, synth_spectrum[peak_indices], color='red', label="True Peaks", s=1)
-#         axs[0].legend()
-#         # Plot the sample spectrum with noise floor on the second subplot
-#         axs[1].plot(f / 1000, parent_spectrum, label="Sample Spectrum")
-#         axs[1].plot(f / 1000, noise_floor, label="Noise Floor", color='orange')
-#         axs[1].set_title(f"Parent Spectrum: {filepath if filepath else 'No filepath provided'}")
-#         axs[1].set_xlabel("Frequency (kHz)")
-#         axs[1].set_ylabel("dB SPL")
-#         axs[1].legend()
-#         axs[1].set_ylim(global_min, global_max)  # Set common y-limits
-#         plt.tight_layout()
-
-#         # Save the figure or show plot
-#         if save_name:
-#             plt.savefig(save_name)
-#         else: 
-#             # Show the plots
-#             plt.show()
-
-    
-#     return {'noise floor' : noise_floor, 'species' : species, 'synth spectrum' : synth_spectrum, 'f0_i' : peak_list[:, 0], 'hwhm' : peak_list[:, 1], 'prominence' : peak_list[:, 2]}
-
-
-# def gen_simple_samples(df, hwhm_max=100, prominence_max=20):
-#     f_length = 8192
-#     # Allocate memory for y (peak labels)
-#     y = np.zeros((len(df), f_length))
-#     # And for y_isolated_peaks
-#     y_isolated_peaks = np.zeros((len(df), f_length))
-
-#     f0_i_s = np.array(df['f0_i'], dtype=object)
-#     hwhms = np.array(df['hwhm'], dtype=object)
-#     prominences = np.array(df['prominence'], dtype=object)
-#     # Rescale peaks to be in range ~[0, 1] (prominence could in principle be > 25 but this would be rare)
-#     hwhms_scaled = hwhms / hwhm_max
-#     prominences_scaled = prominences / prominence_max
-#     # Grab frequency array
-#     for row in range(len(df)):
-#         # Get the peak list components for this row
-#         f0_i_s_row = f0_i_s[row]
-#         hwhms_scaled_row = hwhms_scaled[row]
-#         hwhms_row = hwhms[row]
-#         prominences_scaled_row = prominences_scaled[row]
-#         if len(f0_i_s_row) != len(hwhms_scaled_row) or len(f0_i_s_row) != len(prominences_scaled_row):
-#             raise ValueError("f0s, hwhms, and prominences must have the same length!")
-#         # Add peak lists
-#         for peak_num in range(len(f0_i_s_row)):
-#             # Get peak components
-#             f0_i = int(f0_i_s_row[peak_num])
-#             # First add isolated position labels
-#             y_isolated_peaks[row, f0_i] = 1
-#             # Now we need to calculate how many bins +\- to label
-#             label_hw = get_label_hw(hwhms_row[peak_num])
-#             # min/max is to make sure we don't go out of bounds
-#             f0_i_labels = np.arange(max(f0_i - label_hw, 0), min(f0_i + label_hw + 1, f_length - 1))
-#             for bin_to_label in f0_i_labels:
-#                 # Add labels: [Yes/no peak, hwhm_scaled, prominence]
-#                 y[row, bin_to_label] = 1
-#     X_x = np.stack(df['synth spectrum'])
-#     if np.isnan(X_x).any():
-#         print("HEY")
-#     min_vals = np.min(X_x, axis=1)  # Minimum along the rows
-#     max_vals = np.max(X_x, axis=1)  # Maximum along the rows
-#     mins_maxes = {"mins": min_vals, "maxes": max_vals}
-#     # Rescale
-#     # X_x = (X_x - min_vals[:, None]) / (max_vals[:, None] - min_vals[:, None])
-#     # Return X (rows, N bins), y, and mins/maxes
-#     return X_x, y, mins_maxes, y_isolated_peaks 
-
-# def estimate_noise_sigma(sample_spectrum, f=rfftfreq(32768, 1/44100), noise_domain='log'):
-#     sigmas = np.empty(16)
-#     # First, we chop up into 16 chunks
-#     for i in range(16):
-#         f_win = f[i*500:(i+1)*500]
-#         sample_spectrum_win = sample_spectrum[i*500:(i+1)*500]
-#         # Next, we convert to linear scale (if specified)
-#         if noise_domain == 'linear':
-#             sample_spectrum_win = 10**(sample_spectrum_win/20)
-#         # Now we fit a noise floor estimate using LOWESS
-#         lowess = sm.nonparametric.lowess
-#         # This controls how tightly the fit is to the data
-#         frac = 0.01 # This value yielded a close but still smooth fit (too closely and we just follow the noise!)
-#         noise_floor = lowess(sample_spectrum_win, f_win, frac=frac, return_sorted=False)
-#         plt.plot(f_win, noise_floor, label='Noise Floor')
-#         plt.plot(f_win, sample_spectrum_win, label='Sample Spectrum', alpha=0.5)
-#         plt.show()
-#         # The additive noise is then the difference between the sample spectrum and the noise floor
-#         additive_noise = sample_spectrum_win - noise_floor
-#         # We assume this noise is normally distributed with mean zero. 
-#         # We now estimate the standard deviation using the MLE (since the mean is known, this is also unbiased):
-#         sigmas[i] = np.sqrt(np.mean((additive_noise)**2))
-#     print(sigmas)
-#     return np.mean(sigmas)
-        
-        
-# def estimate_and_add_noise(synth_spectrum, sample_spectrum, f=rfftfreq(32768, 1/44100), rng=np.random.default_rng(), noise_domain='log'):
-#     # First we convert to linear scale (if specified)
-#     if noise_domain == 'linear':
-#         synth_spectrum = 10**(synth_spectrum/20)
-#     # Now we estimate the standard deviation of the additive noise of this sample spectrum
-#     sigma = estimate_noise_sigma(sample_spectrum, f=f, noise_domain=noise_domain)
-#     # We can now add gaussian noise to the linear spectrum
-#     noisy_synth_spectrum = synth_spectrum + rng.normal(loc=0, scale=sigma, size=len(synth_spectrum))
-#     # Finally, we convert it back to dB (if necessary)
-#     if noise_domain == 'linear':
-#         noisy_synth_spectrum = 20 * np.log10(noisy_synth_spectrum)
-#     # and return
-#     return noisy_synth_spectrum
