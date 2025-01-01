@@ -9,7 +9,7 @@ from tensorflow.keras.losses import BinaryCrossentropy
 from tensorflow.autograph.experimental import do_not_convert
 from sklearn.model_selection import train_test_split
 import numpy as np
-from helper_funcs import gen_samples
+from funcs_synth import gen_samples
 from scipy.fft import rfftfreq
 import pickle
 import matplotlib.pyplot as plt

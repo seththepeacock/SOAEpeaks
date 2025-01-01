@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-from pathlib import Path
 from scipy.fft import rfft, rfftfreq
 import statsmodels.api as sm
 from scipy.ndimage import gaussian_filter
@@ -322,44 +321,19 @@ def load_df(laptop=False, dfs_to_load=["York Data 1"]):
     print("Combining into one Dataframe!")
     return pd.concat(dfs, ignore_index=True)
 
-def process_wfs(df, og_chris=False):
-    """Take FFT of all raw waveforms in the dataframe and convert to dB SPL"""
-    # Track where we're at
-    n_wf = (df['sr'] != 0).sum()
-    n_current = 0
+def lab_rescale(input):
+    # Define constants that allow us to correct for lab setup
+    amp_factor = 0.01  # Correct for amplifier gain
+    mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
+    rms_factor = np.sqrt(2)  # Converts to RMS value
+    
+    # Rescale input (either wf or magnitudes, NOT powers!)
+    input = input * amp_factor / (mic_factor * rms_factor)
 
-    for idx, row in df.iterrows():
-        # Skip pre-processed samples
-        if row['sr'] == 0:
-            continue
-
-        n_current+=1
-        print(f"Processing wf {n_current}/{n_wf}")
-
-        # Get waveform and samplerate
-        wf = row['wf']
-
-        db_SPL = get_periodogram_og_chris(wf)
-
-        # Update the DataFrame directly
-        df.at[idx, 'spectrum'] = db_SPL
-        # Remove waveform for space
-        df.at[idx, 'wf'] = []
-        # No need to store freq ax, as these can be generated via rfftfreq(n_win, 1 / sr)
-        
-    return df
-
-def get_periodogram_og_chris(wf, rms_factor=True):
+def get_welch_og_chris(wf, rescale=True):
     # Define window length
     n_win = 32768
     
-    # Define constants that allow us to correct for experimental setup
-    amp_factor = 0.01  # Correct for amplifier gain
-    mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
-    if rms_factor:
-        rms_factor = np.sqrt(2)  # Converts to RMS value
-    else:
-        rms_factor = 1
     # Divide the waveform into windows of length n_win, take magnitude of FFT of each
     mags_list = [
         np.abs(rfft(wf[i * n_win:(i + 1) * n_win])*(2/n_win))
@@ -368,19 +342,20 @@ def get_periodogram_og_chris(wf, rms_factor=True):
 
     # Average over all windows
     avg_mags = np.mean(mags_list, axis=0)
-    return 20 * np.log10(avg_mags * amp_factor * rms_factor / mic_factor)
     
-def get_welch(wf, shift_prop=0.5, win_type='hann', num_wins=None):
+    # Rescale
+    if rescale:
+        avg_mags = lab_rescale(avg_mags)
+        
+    return 20 * np.log10(avg_mags)
+    
+def get_welch(wf, shift_prop=0.5, win_type='hann', n_win=32768, num_wins=None, dB=True, rescale=True):
     # Define window length
-    n_win = 32768
     n_shift = int(n_win*shift_prop)
     
-    # Define constants that allow us to correct for experimental setup
-    amp_factor = 0.01  # Correct for amplifier gain
-    mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
-    
     # Rescale waveform
-    wf = wf * amp_factor / mic_factor
+    if rescale:
+        wf = lab_rescale(wf)
     
     n_possible_win_starts = len(wf) - n_win # Number of samples that could be a start of a sample
     n_full_wins_from_possible_win_starts = np.floor(n_possible_win_starts / n_shift) # Number of full windows we can get out of this set
@@ -401,16 +376,29 @@ def get_welch(wf, shift_prop=0.5, win_type='hann', num_wins=None):
 
     # Average over all windows
     avg_powers = np.mean(powers_list, axis=0)
-    return 10 * np.log10(avg_powers)
+    return rfftfreq(n_win, 1/44100), 10 * np.log10(avg_powers)
 
-def get_scipy_welch(wf, shift_prop=0.5, win_type='hann'):
+def get_pg(wf, win_type='hann', dB=True, rescale=True):
+    n_win=len(wf)
+    window = get_window(win_type, n_win)
+    norm = 2*np.ones((n_win // 2) + 1) # Multiply by two for real FFT (only using half the frequencies)
+    norm[0] = 1  # ...except for the DC and
+    norm[-1] = 1 # ...Nyquist frequencies
+    norm /= np.sum(window)**2 # Squared sum of window coefficients for window normalization (just N for rectangle)
+    
+    # Rescale waveform
+    if rescale:
+        wf = lab_rescale(wf)
+    
+    return 10*np.log10(norm*np.abs(rfft(wf*window))**2)
+
+def get_scipy_welch(wf, shift_prop=0.5, win_type='hann', rescale=True):
     n_win = 32768
     noverlap = int(shift_prop * n_win)
-    amp_factor = 0.01  # Correct for amplifier gain
-    mic_factor = 10**(-6)  # Corresponds to the mic level of 1 microvolt
-    wf = wf * amp_factor / mic_factor
+    if rescale:
+        wf = lab_rescale(wf)
 
-    return 10 * np.log10(welch(wf, fs=1, nperseg=n_win, noverlap=noverlap, window=win_type, scaling='spectrum')[1])
+    return 10 * np.log10(welch(wf, fs=1, nperseg=n_win, noverlap=noverlap, window=win_type, scaling='spectrum', detrend=False)[1])
     
 
 def homogenize_df(df, species=["Human", "Lizard", "Anolis"]):
@@ -478,4 +466,31 @@ def max_min_df(df):
     df['max'] = spec_max
     df['min'] = spec_min
     
+    return df
+
+def process_wfs(df):
+    """Take FFT of all raw waveforms in the dataframe and convert to dB SPL using Welch's Method"""
+    # Track where we're at
+    n_wf = (df['sr'] != 0).sum()
+    n_current = 0
+
+    for idx, row in df.iterrows():
+        # Skip pre-processed samples
+        if row['sr'] == 0:
+            continue
+
+        n_current+=1
+        print(f"Processing wf {n_current}/{n_wf}")
+
+        # Get waveform and samplerate
+        wf = row['wf']
+
+        db_SPL = get_welch_og_chris(wf)
+
+        # Update the DataFrame directly
+        df.at[idx, 'spectrum'] = db_SPL
+        # Remove waveform for space
+        df.at[idx, 'wf'] = []
+        # No need to store freq ax, as these can be generated via rfftfreq(n_win, 1 / sr)
+        
     return df

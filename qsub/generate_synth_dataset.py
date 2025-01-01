@@ -4,8 +4,9 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 import pandas as pd
 import os
+import math
 
-from helper_funcs import *
+from funcs_synth import *
 
 
 # LOAD DATA
