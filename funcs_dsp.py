@@ -13,6 +13,37 @@ def lab_rescale(input):
     # Rescale input (either wf or magnitudes, NOT powers!)
     return input * amp_factor / (mic_factor * rms_factor)
 
+def my_welch(wf, fs, nperseg, win_type='boxcar', nfft=None, num_wins=None, overlap=0.5, scaling='density'):
+    if nfft is None:
+        nfft = nperseg
+    n_shift = int(nperseg*overlap)
+
+    
+    n_possible_win_starts = len(wf) - nperseg # Number of samples that could be a start of a sample
+    n_full_wins_from_possible_win_starts = np.floor(n_possible_win_starts / n_shift) # Number of full windows we can get out of this set
+    max_num_wins = n_full_wins_from_possible_win_starts + 1 # Add one more because the final sample in n_possible_win_starts can always be a sample (though the real start will likely be before this)
+    num_wins_final = int(min(num_wins, max_num_wins)) if num_wins is not None else int(max_num_wins) # Use num_wins if provided and valid, otherwise use the maximum number of windows we can get
+    
+    window = get_window(win_type, nperseg)
+    scale_factors = 2*np.ones((nfft // 2) + 1) # Multiply by two for real FFT (only using half the frequencies)
+    scale_factors[0] = 1  # ...except for the DC and
+    scale_factors[-1] = 1 # ...Nyquist frequencies
+    
+    if scaling == 'spectrum':
+        scale_factors /= np.sum(window)**2 # (Just N**2 for rectangle)
+    elif scaling == 'density':
+        scale_factors /= (np.sum(window**2) * fs) # (Just N * fs = N^2 * bin_wdith for rectangle)
+        
+    
+    # Divide the waveform into windows of length n_win, take magnitude of FFT of each
+    powers_list = [
+        scale_factors*np.abs(rfft(np.pad(wf[i*n_shift : i*n_shift + nperseg]*window, (0, nfft-nperseg), 'constant')))**2 # Each new window has a start index that's n_shift more than the last
+        for i in range(num_wins_final)
+    ]
+
+    # Average over all windows
+    return rfftfreq(nfft, 1/fs), np.mean(powers_list, axis=0)
+
 def get_welch_og_chris(wf, rescale=True, dB=True):
     # Define window length
     n_win = 32768
