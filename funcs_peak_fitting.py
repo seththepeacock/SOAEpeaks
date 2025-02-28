@@ -4,8 +4,8 @@ from scipy.special import wofz
 # Define profiles
 
 # Lorentzian peak
-def Lorentzian(x, x0, y0, amp, gamma):
-    lorentzian = gamma**2 / ((x - x0)**2 + gamma**2)
+def Lorentzian(f, f0, y0, amp, gamma):
+    lorentzian = gamma**2 / ((f - f0)**2 + gamma**2)
     return y0 + amp * lorentzian # Note max height is exactly amp
 
 # (Sampled) DTFT of a boxcar window with nperseg nonzero points. Note this is where the factor of "N" gets introduced that needs scaling out in the IDFT
@@ -24,19 +24,19 @@ def boxcar_DTFT(w, N, fs):
         result = func(w)
     return result
 
-def damped_sinusoid_DTFT(f, f0, A, gamma, fs):
-    # Convert to normalized radial frequency
-    w = 2 * np.pi * f / fs
-    w0 = 2 * np.pi * f0 / fs
+def damped_sinusoid_DTFT(w, w0, A, alpha, phi, fs):
+    # DTFT of A * np.cos(f0*2*np.pi*t + phi) * np.exp(-gamma * np.abs(t)) where t = n / fs
+    # Cosine splits into two terms
+    
     # Compute the two terms in the DTFT expression
-    term1 = 1 / (1 - np.exp(-(gamma + 1j * (w - w0))))
-    term2 = 1 / (1 - np.exp(-(gamma + 1j * (w + w0))))
+    term1 = np.exp( 1j * phi) / (1 - np.exp(-(alpha / fs) - 1j * (w - w0)))
+    term2 = np.exp(-1j * phi) / (1 - np.exp(-(alpha / fs) - 1j * (w + w0)))
 
     # Combine the terms with the amplitude scaling
     return (A / 2) * (term1 + term2)
 
 # Convolution of Lorentz with the boxcar
-def Lorentzian_conv(f, f0, y0, A, gamma, nperseg, fs):
+def Lorentzian_conv(f, f0, y0, amp, gamma, N, fs):
     """
     Compute the convolution of a Lorentzian peak (technically, the damped sinusoid DTFT) with a boxcar function.
     
@@ -46,20 +46,18 @@ def Lorentzian_conv(f, f0, y0, A, gamma, nperseg, fs):
         y0 (float): Offset of the Lorentzian peaks.
         amp (float): Amplitude of the Lorentzian peaks.
         gamma (float): Half-width at half-maximum (HWHM) of the Lorentzian peas.
-        nperseg (int): Length of the boxcar function.
+        N (int): Length of the boxcar function.
         fs (float): Sampling frequency.
     
     Returns:
         array: Convolution result corresponding to the original indices of x, with the peak preserved.
     """
     # Compute the Lorentzian function peaks (positive and negative)
-        # Is this bleeding of the positive freq peak into the negative freqs (and vice versa) correct?
-        # YES
-    X =  damped_sinusoid_DTFT(f, f0, A, gamma, fs)
+    lorentzians = Lorentzian(f, f0, y0, amp, gamma) + Lorentzian(f, -f0, y0, amp, gamma)
     # Compute the boxcar DTFT 
-    boxcar = boxcar_DTFT(f, nperseg, fs)
+    boxcar = boxcar_DTFT(f, N, fs)
     # Circular convolution via FFTs
-    result = np.real(np.fft.ifft(np.fft.fft(X)*np.fft.fft(boxcar))) + y0
+    result = np.real(np.fft.ifft(np.fft.fft(lorentzians)*np.fft.fft(boxcar))) + y0
     return np.abs(result)
 
 
