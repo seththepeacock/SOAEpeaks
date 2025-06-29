@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
-from funcs_dsp import *
+from SOAEpeaks.funcs_dsp import *
 
 
-def load_df(laptop=False, dfs_to_load=["York Data 1"]):
+def load_df(laptop=True, dfs_to_load=["Lots of Data"]):
     """ Load all desired dataframes and concatenate (with no arguments, this loads just York Data 1 with OSC path)
     """
     if laptop:

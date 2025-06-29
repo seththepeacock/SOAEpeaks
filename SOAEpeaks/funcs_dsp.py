@@ -2,16 +2,6 @@ import numpy as np
 from scipy.fft import rfft, rfftfreq
 from scipy.signal import welch, get_window
 
-# import sys
-# import os
-
-# # Add the path to the folder containing the module
-# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'other_folder')))
-
-# from helper import my_function
-
-# print(my_function())
-
 
 def lab_rescale(input):
     # Define constants that allow us to correct for lab setup
